@@ -7,7 +7,7 @@ A small team notes app that people and AI agents can both use:
 
 The plan, decisions and design tokens are in [Implementation_Guide.md](Implementation_Guide.md).
 
-> **Status:** scaffold only. The API serves `/api/health` with CORS, and the web app shows the app shell. Note features come next.
+> **Status:** the REST API is done (`/api/notes`: list/search, get, create, delete). The web app shows the app shell only. MCP and the UI features come next.
 
 ## Prerequisites
 

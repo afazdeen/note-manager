@@ -1,4 +1,4 @@
-module github.com/afazdeen/note-manager/api
+module note-manager/api
 
 go 1.27.3
 

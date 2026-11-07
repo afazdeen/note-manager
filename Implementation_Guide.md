@@ -6,7 +6,7 @@ A small notes app that people (React UI) and AI agents (MCP) both use. One Go se
 
 | #  | Requirement | Delivered by |
 |----|-------------|--------------|
-| R1 | Backend API: create, list, search, delete. Notes in memory. A few meaningful tests | `api/`: Go standard library, `notes` package (model / service / repository), `httptest` tests |
+| R1 | Backend API: create, list, search, delete. Notes in memory. A few meaningful tests | `api/`: Go standard library, `note` package (note / service / memory repository), `httptest` tests |
 | R2 | React + TypeScript UI: list and detail views, loading/empty/error states, keyboard friendly | `web/`: Vite, TanStack Query, Tailwind |
 | R3 | One Web Component used inside React | `<tag-input>` tag picker, used in the create form and in the note detail |
 | R4 | MCP server with at least 2 tools, plus a note on auth and destructive actions | `/mcp` on the same server: `search_notes`, `create_note`, `delete_note`, plus `api/internal/mcp/note.md` |
@@ -21,13 +21,13 @@ A small notes app that people (React UI) and AI agents (MCP) both use. One Go se
  ┌──────────────────── Go server (:8080) ─────────────────────┐
  │  /api/*  httpapi handlers          /mcp  mcp tool handlers │
  │              └──────────┬───────────────┘                  │
- │                   notes.Service   (validation, search)     │
+ │                   note.Service  (validation, id, time)     │
  │                         │                                  │
- │                   notes.Repository (in memory, RWMutex)    │
+ │                   note.Repository (in memory, RWMutex)     │
  └────────────────────────────────────────────────────────────┘
 ```
 
-- The repository only stores data (`Create`, `Get`, `List`, `Delete`). All the rules live in the service, so a SQLite repository could replace the in-memory one without other changes.
+- The service validates and normalises input, sets `id` and `createdAt`, and turns the search text into lowercase terms. The repository interface is defined in `service.go` (`Create`, `Get`, `Search(terms)`, `Delete`). The repository does the matching and the newest-first ordering, the way SQL would, so a SQLite repository could replace the in-memory one without other changes. The in-memory repository copies notes on the way in and out, so callers can't change stored data.
 - On start, the server seeds 5 notes with different tags and timestamps (can be switched off with `SEED_NOTES=false`).
 - Agents can change notes too. The UI refetches when the window regains focus and every 15 s, so those changes show up.
 
@@ -62,16 +62,25 @@ All failing fields are returned together, one message per field.
 |---------------|---------|--------|
 | `GET /api/notes?search=<text>` | `200 {"notes": Note[]}` | – |
 | `GET /api/notes/{id}` | `200 Note` | 404 |
-| `POST /api/notes` body `{title, body?, tags?}` | `201 Note` | 400, 413, 422 |
+| `POST /api/notes` body `{title, body?, tags?}` | `201 Note` + `Location` | 400, 413, 415, 422 |
 | `DELETE /api/notes/{id}` | `204` | 404 |
 | `GET /api/health` | `200 {"status":"ok"}` | – |
 
 Every error uses one shape (`fields` appears only for 422):
 ```json
 { "error": { "code": "validation_failed", "message": "Some fields are invalid.",
-             "fields": { "title": "is required", "tags": "\"Bad Tag!\" is not a valid tag" } } }
+             "fields": { "title": "is required", "tags": "\"bad tag!\" is not a valid tag (...)" } } }
 ```
-Codes: `bad_request` (400, malformed JSON or unknown fields), `not_found` (404), `payload_too_large` (413, body over 64 KB), `validation_failed` (422), `internal` (500, no internal details leaked). Routing uses Go 1.22+ `http.ServeMux` method patterns.
+Codes:
+- `bad_request` (400): malformed JSON, unknown fields, wrong types, an empty body, or more than one object.
+- `not_found` (404): unknown note ids and unknown routes, including routes outside `/api`.
+- `method_not_allowed` (405): a known path with the wrong method, plus an `Allow` header.
+- `payload_too_large` (413): a body over 64 KB.
+- `unsupported_media_type` (415): `POST` without `Content-Type: application/json`. This forces browsers to send a preflight, so another site can't create notes with a plain form post.
+- `validation_failed` (422).
+- `internal` (500): a generic message. The real cause is only logged. Panics are recovered, logged with a stack trace, and answered with this error.
+
+Routing uses Go 1.22+ `http.ServeMux` method patterns. Handlers depend on a small `NoteService` interface, and every request is logged with its method, path, status and duration.
 
 ## 5. MCP server (`/mcp`)
 
@@ -167,8 +176,8 @@ The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Tailw
 api/
   cmd/server/main.go              config, seed data, mux wiring, graceful shutdown
   internal/config/config.go
-  internal/notes/                 model.go  service.go  repository.go  seed.go  *_test.go
-  internal/httpapi/               handlers.go  errors.go  cors.go  logging.go  *_test.go
+  internal/note/                  note.go (type, validation)  service.go (+ Repository interface)  memory.go  seed.go  *_test.go
+  internal/httpapi/               handlers.go  errors.go  json.go  cors.go  logging.go  recover.go  *_test.go
   internal/mcp/                   server.go  tools.go  tools_test.go  note.md
   go.mod  .env.example
 web/
@@ -192,7 +201,7 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 
 ## 12. Build order (~3 h)
 
-1. `notes` package (model, repository, service, seed) + tests (35 min)
+1. `note` package (note, service, memory repository, seed) + tests (35 min)
 2. REST handlers, errors, CORS, config, `main.go` + tests (30 min)
 3. MCP tools + test, then write `note.md` (25 min)
 4. Web scaffold, tokens, API client, query hooks, MSW (20 min)

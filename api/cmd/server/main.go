@@ -15,8 +15,9 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/afazdeen/note-manager/api/internal/config"
-	"github.com/afazdeen/note-manager/api/internal/httpapi"
+	"note-manager/api/internal/config"
+	"note-manager/api/internal/httpapi"
+	"note-manager/api/internal/note"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -39,20 +40,29 @@ func run(logger *slog.Logger) error {
 		return err
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	repo := note.NewMemoryRepository()
+	if cfg.SeedNotes {
+		if err := note.Seed(ctx, repo, time.Now()); err != nil {
+			return fmt.Errorf("seeding notes: %w", err)
+		}
+	}
+	notes := note.NewService(repo)
+
 	mux := http.NewServeMux()
-	mux.Handle("/api/", httpapi.NewHandler(cfg.CORSAllowedOrigin))
+	mux.Handle("/api/", httpapi.NewHandler(notes, cfg.CORSAllowedOrigin, logger))
+	mux.Handle("/", httpapi.NotFoundHandler())
 
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.LogRequests(logger, mux),
+		Handler:           httpapi.LogRequests(logger, httpapi.Recover(logger, mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	serveErr := make(chan error, 1)
 	go func() {
