@@ -60,6 +60,12 @@ func TestServiceCreate(t *testing.T) {
 			want: CreateInput{Title: "No tags", Tags: []string{}},
 		},
 		{
+			// The zero-width joiner in the emoji is a format character, not a control.
+			name: "emoji and accents are allowed in the title",
+			in:   CreateInput{Title: "Café 👩‍💻 review"},
+			want: CreateInput{Title: "Café 👩‍💻 review", Tags: []string{}},
+		},
+		{
 			name: "values exactly at the limits are accepted",
 			in: CreateInput{
 				Title: strings.Repeat("é", MaxTitleLength), // counts characters, not bytes
@@ -118,6 +124,10 @@ func TestServiceCreateValidation(t *testing.T) {
 		{"missing title", CreateInput{}, []string{"title"}, "is required"},
 		{"whitespace-only title", CreateInput{Title: " \t\n "}, []string{"title"}, "is required"},
 		{"title too long", CreateInput{Title: strings.Repeat("a", MaxTitleLength+1)}, []string{"title"}, "at most 120"},
+		{"line break in title", CreateInput{Title: "first\nsecond"}, []string{"title"}, "single line"},
+		{"tab in title", CreateInput{Title: "a\tb"}, []string{"title"}, "control characters"},
+		{"NUL in title", CreateInput{Title: "a\x00b"}, []string{"title"}, "control characters"},
+		{"right-to-left override in title", CreateInput{Title: "invoice‮txt.exe"}, []string{"title"}, "control characters"},
 		{"body too long", CreateInput{Title: "ok", Body: strings.Repeat("b", MaxBodyLength+1)}, []string{"body"}, "at most 10000"},
 		{"tag with a space and a symbol", CreateInput{Title: "ok", Tags: []string{"Bad Tag!"}}, []string{"tags"}, `"bad tag!" is not a valid tag`},
 		{"tag starting with a hyphen", CreateInput{Title: "ok", Tags: []string{"-draft"}}, []string{"tags"}, `"-draft"`},
@@ -156,6 +166,29 @@ func TestServiceCreateValidation(t *testing.T) {
 				t.Errorf("repository has %d notes after a failed create, want 0", len(all))
 			}
 		})
+	}
+}
+
+// termsRecorder records the terms the service passes to the repository.
+type termsRecorder struct {
+	*MemoryRepository
+	terms []string
+}
+
+func (r *termsRecorder) Search(ctx context.Context, terms []string) ([]Note, error) {
+	r.terms = terms
+	return r.MemoryRepository.Search(ctx, terms)
+}
+
+func TestServiceSearchPassesEachTermOnce(t *testing.T) {
+	repo := &termsRecorder{MemoryRepository: NewMemoryRepository()}
+	svc := NewService(repo)
+
+	if _, err := svc.Search(context.Background(), "plan API plan  api PLAN"); err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if want := []string{"api", "plan"}; !slices.Equal(repo.terms, want) {
+		t.Errorf("repository got terms %q, want %q", repo.terms, want)
 	}
 }
 

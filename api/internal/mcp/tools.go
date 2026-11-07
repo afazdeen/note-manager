@@ -2,13 +2,16 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"note-manager/api/internal/note"
@@ -56,10 +59,21 @@ type searchOutput struct {
 	Total int          `json:"total" jsonschema:"How many notes match in total. Can be more than the number returned when limit cuts the list short."`
 }
 
+// searchInputSchema adds the limit's range and default to the inferred schema,
+// so clients can check it before calling. The SDK validates against it too.
+func searchInputSchema() *jsonschema.Schema {
+	s := schemaFor[searchInput]()
+	limit := s.Properties["limit"]
+	limit.Minimum = ptr(1.0)
+	limit.Maximum = ptr(float64(maxSearchLimit))
+	limit.Default = json.RawMessage(strconv.Itoa(defaultSearchLimit))
+	return s
+}
+
 var searchTool = &sdk.Tool{
 	Name:         "search_notes",
 	Title:        "Search notes",
-	InputSchema:  schemaFor[searchInput](),
+	InputSchema:  searchInputSchema(),
 	OutputSchema: schemaFor[searchOutput](),
 	Description: "Search the team's shared notes. Returns notes whose title, body or tags contain every word of `search` " +
 		"(case-insensitive), newest first. Leave `search` empty to list the most recent notes. Read-only.",
@@ -70,21 +84,16 @@ var searchTool = &sdk.Tool{
 	},
 }
 
+// search runs search_notes. The SDK has already checked limit against the
+// schema (1 to 50) and filled in the default when it was left out.
 func (t *tools) search(ctx context.Context, _ *sdk.CallToolRequest, in searchInput) (*sdk.CallToolResult, searchOutput, error) {
-	limit := in.Limit
-	if limit == 0 {
-		limit = defaultSearchLimit
-	}
-	if limit < 1 || limit > maxSearchLimit {
-		return nil, searchOutput{}, fmt.Errorf("limit must be between 1 and %d (got %d)", maxSearchLimit, in.Limit)
-	}
-
 	notes, err := t.notes.Search(ctx, in.Search)
 	if err != nil {
 		return nil, searchOutput{}, t.toolError(err)
 	}
-	out := searchOutput{Notes: make([]noteResult, 0, min(limit, len(notes))), Total: len(notes)}
-	for _, n := range notes[:min(limit, len(notes))] {
+	count := min(in.Limit, len(notes))
+	out := searchOutput{Notes: make([]noteResult, 0, count), Total: len(notes)}
+	for _, n := range notes[:count] {
 		out.Notes = append(out.Notes, toResult(n))
 	}
 	return nil, out, nil

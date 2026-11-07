@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 // Defaults used when a variable is unset or empty.
 const (
+	DefaultHost              = "127.0.0.1"
 	DefaultPort              = 8080
 	DefaultCORSAllowedOrigin = "http://localhost:5173"
 	DefaultSeedNotes         = true
@@ -18,6 +20,7 @@ const (
 
 // Config is the validated server configuration.
 type Config struct {
+	Host              string // an IP address or "localhost"
 	Port              int
 	CORSAllowedOrigin string // normalised to scheme://host[:port]
 	SeedNotes         bool
@@ -25,7 +28,7 @@ type Config struct {
 
 // Addr returns the listen address for http.Server.
 func (c Config) Addr() string {
-	return ":" + strconv.Itoa(c.Port)
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
 
 // Load reads the configuration through getenv (usually os.Getenv). Unset or
@@ -34,11 +37,20 @@ func (c Config) Addr() string {
 // fast at startup.
 func Load(getenv func(string) string) (Config, error) {
 	cfg := Config{
+		Host:              DefaultHost,
 		Port:              DefaultPort,
 		CORSAllowedOrigin: DefaultCORSAllowedOrigin,
 		SeedNotes:         DefaultSeedNotes,
 	}
 	var errs []error
+
+	if v := strings.TrimSpace(getenv("HOST")); v != "" {
+		if v != "localhost" && net.ParseIP(v) == nil {
+			errs = append(errs, fmt.Errorf("HOST must be an IP address or localhost, got %q", v))
+		} else {
+			cfg.Host = v
+		}
+	}
 
 	if v := strings.TrimSpace(getenv("PORT")); v != "" {
 		port, err := strconv.Atoi(v)
@@ -74,7 +86,8 @@ func Load(getenv func(string) string) (Config, error) {
 }
 
 // parseOrigin accepts a single http(s) origin, such as http://localhost:5173,
-// and returns it in the form browsers send in the Origin header.
+// and returns it in the form browsers send in the Origin header: lowercase,
+// and without a default port (:80 for http, :443 for https).
 func parseOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -83,5 +96,9 @@ func parseOrigin(raw string) (string, error) {
 	if (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		return "", fmt.Errorf("must be only scheme, host and optional port (no path or query), got %q", raw)
 	}
-	return u.Scheme + "://" + strings.ToLower(u.Host), nil
+	host := strings.ToLower(u.Host)
+	if (u.Scheme == "http" && u.Port() == "80") || (u.Scheme == "https" && u.Port() == "443") {
+		host = strings.TrimSuffix(host, ":"+u.Port()) // keeps the brackets of an IPv6 host
+	}
+	return u.Scheme + "://" + host, nil
 }

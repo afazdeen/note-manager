@@ -14,6 +14,13 @@ const LABELS: Record<NoteField, string> = { title: 'Title', body: 'Body', tags: 
 const length = (text: string): number => [...text].length
 const formatNumber = (n: number): string => n.toLocaleString('en')
 
+/**
+ * Control characters (line breaks, tabs) and bidirectional controls (such as
+ * U+202E, which shows text in a different order than it is stored). Titles
+ * can't contain them; the server uses the same rule.
+ */
+const TITLE_CONTROL = /[\p{Cc}\p{Bidi_Control}]/u
+
 /** Checks a note the same way the server does. Returns one message per invalid field. */
 export function validateNote(input: CreateNoteInput): NoteFieldErrors {
   const errors: NoteFieldErrors = {}
@@ -23,6 +30,8 @@ export function validateNote(input: CreateNoteInput): NoteFieldErrors {
     errors.title = 'Title is required.'
   } else if (length(title) > MAX_TITLE_LENGTH) {
     errors.title = `Title must be at most ${MAX_TITLE_LENGTH} characters (it has ${formatNumber(length(title))}).`
+  } else if (TITLE_CONTROL.test(title)) {
+    errors.title = 'Title must be a single line without control characters.'
   }
 
   const body = (input.body ?? '').trim()

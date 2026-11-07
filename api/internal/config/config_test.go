@@ -15,17 +15,19 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	want := Config{Port: 8080, CORSAllowedOrigin: "http://localhost:5173", SeedNotes: true}
+	want := Config{Host: "127.0.0.1", Port: 8080, CORSAllowedOrigin: "http://localhost:5173", SeedNotes: true}
 	if cfg != want {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
 	}
-	if got := cfg.Addr(); got != ":8080" {
-		t.Errorf("Addr() = %q, want %q", got, ":8080")
+	// Only this machine can connect by default, because there is no authentication.
+	if got := cfg.Addr(); got != "127.0.0.1:8080" {
+		t.Errorf("Addr() = %q, want %q", got, "127.0.0.1:8080")
 	}
 }
 
 func TestLoadOverrides(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
+		"HOST":                "::1",
 		"PORT":                " 9090 ",
 		"CORS_ALLOWED_ORIGIN": "https://Notes.Example.com/",
 		"SEED_NOTES":          "false",
@@ -33,9 +35,34 @@ func TestLoadOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	want := Config{Port: 9090, CORSAllowedOrigin: "https://notes.example.com", SeedNotes: false}
+	want := Config{Host: "::1", Port: 9090, CORSAllowedOrigin: "https://notes.example.com", SeedNotes: false}
 	if cfg != want {
 		t.Errorf("Load() = %+v, want %+v", cfg, want)
+	}
+	if got := cfg.Addr(); got != "[::1]:9090" {
+		t.Errorf("Addr() = %q, want %q", got, "[::1]:9090")
+	}
+}
+
+// Browsers leave the default port out of the Origin header, so a configured
+// default port must be dropped too, or the origin would never match.
+func TestLoadDropsDefaultOriginPort(t *testing.T) {
+	tests := map[string]string{
+		"http://localhost:80":           "http://localhost",
+		"https://Notes.Example.com:443": "https://notes.example.com",
+		"http://[::1]:80":               "http://[::1]",
+		"http://localhost:443":          "http://localhost:443",
+		"https://example.com:80":        "https://example.com:80",
+		"http://localhost:5173":         "http://localhost:5173",
+	}
+	for raw, want := range tests {
+		cfg, err := Load(env(map[string]string{"CORS_ALLOWED_ORIGIN": raw}))
+		if err != nil {
+			t.Fatalf("Load(%q) error = %v", raw, err)
+		}
+		if cfg.CORSAllowedOrigin != want {
+			t.Errorf("Load(%q) origin = %q, want %q", raw, cfg.CORSAllowedOrigin, want)
+		}
 	}
 }
 
@@ -45,6 +72,8 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		vars    map[string]string
 		wantErr string
 	}{
+		{"host name", map[string]string{"HOST": "example.com"}, "HOST"},
+		{"host with port", map[string]string{"HOST": "127.0.0.1:8080"}, "HOST"},
 		{"port not a number", map[string]string{"PORT": "abc"}, "PORT"},
 		{"port zero", map[string]string{"PORT": "0"}, "PORT"},
 		{"port too high", map[string]string{"PORT": "70000"}, "PORT"},

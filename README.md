@@ -1,98 +1,94 @@
 # Team Notes
 
-A small team notes app that people and AI agents can both use:
+A small team notes app that people and AI agents both use.
 
-- **`api/`**: a Go server. The REST API is under `/api` and the MCP server is at `/mcp`. Both use the same note service, so people and agents see the same notes. Notes are kept in memory.
-- **`web/`**: React + TypeScript (Vite), TanStack Query, Tailwind, and a `<tag-input>` Web Component.
+- **`api/`**: one Go server. REST at `/api` for the web app, MCP at `/mcp` for agents. Both call the same note service, so they always see the same notes.
+- **`web/`**: React + TypeScript (Vite, TanStack Query, Tailwind). Its `<tag-input>` Web Component is used in the create dialog and the note view.
 
-The plan, decisions and design tokens are in [Implementation_Guide.md](Implementation_Guide.md). Authentication and destructive actions for MCP are covered in [api/internal/mcp/note.md](api/internal/mcp/note.md).
+The detailed plan and design tokens are in [Implementation_Guide.md](Implementation_Guide.md).
 
-## Prerequisites
+## Run it
 
-- Go 1.27+ (see `api/go.mod`)
-- Node.js 24+ and npm
-
-## Setup
-
-### API
+You need **Go 1.27+** and **Node 24+**. Start the API, then the web app, each in its own terminal:
 
 ```bash
-cd api
-cp .env.example .env      # optional: the defaults work for local development
-go run ./cmd/server       # http://localhost:8080
-curl http://localhost:8080/api/health   # {"status":"ok"}
+cd api && go run ./cmd/server                 # http://localhost:8080 (seeds 5 demo notes)
+cd web && npm install && npm run dev          # http://localhost:5173
 ```
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `PORT` | `8080` | HTTP port |
-| `CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | The only browser origin allowed to call `/api` |
-| `SEED_NOTES` | `true` | Load demo notes on start |
+The defaults work as they are. To change them, copy `.env.example` to `.env` in either folder.
 
-The server refuses to start if a value is invalid, and lists every problem. Press `Ctrl+C` to shut it down gracefully.
+| App | Variable | Default | Purpose |
+|-----|----------|---------|---------|
+| api | `HOST` | `127.0.0.1` | Address to listen on. There's no authentication, so by default only this machine can connect |
+| api | `PORT` | `8080` | HTTP port |
+| api | `CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | The only browser origin allowed to call `/api` and `/mcp` |
+| api | `SEED_NOTES` | `true` | Load demo notes on start |
+| web | `VITE_API_BASE_URL` | `http://localhost:8080/api` | Where the web app finds the API |
 
-### Web
+The API refuses to start with an invalid value and lists every problem. Notes are kept in memory, so a restart resets them.
+
+**Tests and checks** (the same ones CI runs on every push and PR):
 
 ```bash
-cd web
-cp .env.example .env      # optional: defaults to http://localhost:8080/api
-npm install
-npm run dev               # http://localhost:5173
+cd api && gofmt -l . && go vet ./... && go test ./...
+cd web && npm run typecheck && npm run lint && npm test -- --run && npm run build
 ```
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `VITE_API_BASE_URL` | `http://localhost:8080/api` | API base URL, read only in `src/config/env.ts` |
+## Connect an agent (MCP)
 
-The dev server always uses port 5173 so that it matches `CORS_ALLOWED_ORIGIN`.
-
-## Using the MCP server
-
-With the API running, agents connect to `http://localhost:8080/mcp` over Streamable HTTP. It offers three tools:
-- `search_notes` (read-only)
-- `create_note`
-- `delete_note` (destructive; needs `confirm: true`)
-
-**MCP Inspector** opens a UI in the browser. Choose transport **Streamable HTTP**, set the URL to `http://localhost:8080/mcp`, and keep the default **Via Proxy** connection:
-
-```bash
-npx @modelcontextprotocol/inspector
-```
-
-Or use the CLI, with no UI:
-
-```bash
-npx @modelcontextprotocol/inspector --cli http://localhost:8080/mcp --transport http --method tools/list
-npx @modelcontextprotocol/inspector --cli http://localhost:8080/mcp --transport http \
-  --method tools/call --tool-name search_notes --tool-arg search=retro
-```
-
-**Claude Code**:
+With the API running, the MCP server is at `http://localhost:8080/mcp` (Streamable HTTP). It has three tools: `search_notes` (read-only), `create_note`, and `delete_note` (destructive).
 
 ```bash
 claude mcp add --transport http team-notes http://localhost:8080/mcp
-claude mcp list          # team-notes should show as connected
 ```
 
-Then ask, for example: "Search my team notes for planning", "Create a note called Release checklist tagged release", or "Delete the Release checklist note". Claude Code asks before running a tool. For `delete_note`, the agent has to confirm with you first.
+Then try this in Claude Code, with the web app open:
 
-## Checks
+> Find my team's notes about planning, then create a note called "Release checklist" tagged release with three steps for Friday's release.
 
-These are the same checks that CI runs (`.github/workflows/`). Each app's workflow runs on every push and pull request that changes its files.
+The new note appears in the web app within 15 seconds. To look at the tools directly, run `npx @modelcontextprotocol/inspector`, choose **Streamable HTTP**, enter the URL above, and keep **Via Proxy**. (Direct mode comes from the Inspector's own browser origin, which `/mcp` refuses on purpose.)
 
-```bash
-# api/
-gofmt -l .          # should print nothing
-go vet ./...
-go test ./...
+## Auth and destructive actions
 
-# web/
-npm run typecheck
-npm run lint
-npm test -- --run
-npm run build
-```
+**Now (local demo):**
+- **No authentication.** Anyone who can reach the port can use the API and the tools.
+- **Origin checks.** Browsers may only call the server from the web app's origin. On `/api`, CORS stops other sites reading responses; on `/mcp`, other sites get `403`. `POST` requests must be JSON, so a plain HTML form on another site can't create notes.
+- **Tool hints.** MCP tools say whether they're read-only or destructive, so clients like Claude Code can ask you before running them.
+- **Two-step delete.** `delete_note` refuses unless the agent passes `confirm: true`. Its error tells the agent to check with you first. The web app always asks for confirmation, and each delete is logged.
 
-## Still to come
+**In production** (more detail in [api/internal/mcp/note.md](api/internal/mcp/note.md)):
+- **OAuth 2.1**, following the MCP authorization spec, through the team's identity provider. The server checks the token's signature, expiry and audience on every request.
+- **Scopes:** `notes:read`, `notes:write` and `notes:delete`. Most agents would never get `notes:delete`.
+- **Soft delete** with a 30-day trash, a `restore_note` tool and an Undo button, so a mistaken delete costs nothing.
+- **An audit log** of who deleted what, from which client and when, plus rate limits on deletes. Where clients support it, the server would also ask the person to confirm (MCP elicitation) rather than trust a flag the model sets.
 
-The sections the brief asks for, which I'll fill in as the build progresses: key decisions, what I'd do with more time, and how I used AI tools.
+## Key decisions and trade-offs
+
+- **Service/repository split.** `note.Service` owns the rules: validation, ids, timestamps and parsing the search text. `note.Repository` only stores, matches and orders notes, the way SQL would. **Moving to SQLite means writing one new repository**; the service, REST, MCP and their tests stay the same. *Trade-off:* the in-memory version loses data on restart.
+- **One server for REST and MCP.** People and agents can't drift apart: same notes, same validation, same errors. *Trade-off:* they scale together. That's fine at this size, and they could be split later because both only depend on the service.
+- **Standard library first (Go).** `net/http` routing, `slog` and Go's cross-origin protection, plus the official MCP SDK. There's less to learn and maintain, at the cost of writing a little middleware by hand.
+- **Stateless MCP with JSON responses.** It's simple, easy to test with curl and easy to scale. *Trade-off:* the server can't ask the client anything back mid-call (needed for elicitation).
+- **Optimistic UI.** Deletes show at once and roll back with an error toast if the server fails. Searches keep the previous results on screen while loading. Lists refetch every 15 s so agents' changes appear. *Trade-off:* this polls instead of pushing live updates.
+- **Native `<dialog>` and a framework-free Web Component.** The browser handles the modal focus trap. `<tag-input>` works in any framework and picks up the app's colour tokens through CSS variables. *Trade-off:* shadow DOM needed some extra care in tests.
+- **Accessibility as a requirement, not polish.** Every action works from the keyboard and every control has a visible focus ring. Tap targets are at least 24px, and there's no sideways scrolling at 375px. The palette is locked to the design tokens.
+
+## What I'd do with more time
+
+1. Authentication and scopes, then soft delete with undo (as described above).
+2. SQLite behind the repository interface.
+3. Editing notes, with an `updatedAt` and a way to handle two people editing at once.
+4. Live updates with server-sent events instead of polling.
+5. Playwright end-to-end tests in CI. I checked keyboard-only use and 375px in a real browser with one-off scripts.
+6. Pagination, Markdown in note bodies, dark mode, and testing with a real screen reader.
+
+## How I used AI tools
+
+I built this with **Claude Code** in VS Code, one small step at a time:
+
+- **Planning.** It turned the brief and my decisions into [Implementation_Guide.md](Implementation_Guide.md) and asked about the unclear parts.
+- **Ground rules.** [CLAUDE.md](CLAUDE.md) told it to follow the guide, ask before adding dependencies or changing a decision, and run every check after each change.
+- **Building and verifying.** It wrote code and tests, ran the checks, and tested the real app in a headless browser. That caught problems the unit tests couldn't, such as a stale Web Component after hot reload and clipped focus rings.
+- **Decisions stayed mine.** For example: a dialog for creating notes, delete buttons in the list, and approving the extra schema library for MCP.
+
+> **TODO (Afaz):** add 2–3 concrete examples of how you used it, e.g. a prompt that worked well, something you corrected or rejected, and what you checked by hand.

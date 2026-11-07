@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -64,6 +65,8 @@ func (in CreateInput) Validate() (CreateInput, error) {
 		fields["title"] = "is required"
 	case n > MaxTitleLength:
 		fields["title"] = fmt.Sprintf("must be at most %d characters (got %d)", MaxTitleLength, n)
+	case strings.ContainsFunc(in.Title, isTitleControl):
+		fields["title"] = "must be a single line without control characters"
 	}
 
 	if n := utf8.RuneCountInString(in.Body); n > MaxBodyLength {
@@ -93,6 +96,13 @@ func (in CreateInput) normalize() CreateInput {
 		}
 	}
 	return out
+}
+
+// isTitleControl reports whether r is not allowed in a title: control
+// characters such as line breaks and tabs, and bidirectional controls such as
+// U+202E, which make text display in a different order than it is stored.
+func isTitleControl(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
 }
 
 // validateTags returns a message for the tags field, or "" if the tags are valid.

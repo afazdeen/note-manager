@@ -48,13 +48,13 @@ Notes can't be edited, so there is no `updatedAt`.
 
 | Field | Rule |
 |-------|------|
-| title | Required after trimming. 1–120 characters |
+| title | Required after trimming. 1–120 characters. A single line: no control characters (line breaks, tabs) and no bidirectional controls such as U+202E |
 | body  | Optional. At most 10,000 characters. Plain text |
 | tags  | 0–10 tags. Each one is trimmed, lowercased and de-duplicated, then must match `^[a-z0-9][a-z0-9-]{0,23}$` (1–24 characters: letters, digits, hyphens, not starting with a hyphen) |
 
 All failing fields are returned together, one message per field.
 
-**Search**: the `search` text (the same parameter name in REST and MCP) is trimmed and split on whitespace. A note matches when *every* term appears, case-insensitively, in the title, the body or any tag. An empty or missing `search` returns all notes. Results are always newest first (`createdAt` descending, ties broken by `id`).
+**Search**: the `search` text (the same parameter name in REST and MCP) is trimmed, split on whitespace and de-duplicated. A note matches when *every* term appears, case-insensitively, in the title, the body or any tag. An empty or missing `search` returns all notes. Results are always newest first (`createdAt` descending, ties broken by `id`).
 
 ## 4. REST API (`/api`)
 
@@ -99,7 +99,7 @@ All three tools are `openWorldHint: false`. Errors come back as tool errors (`is
 - **Validation:** the same field messages as REST.
 - **Unknown id:** suggests running `search_notes`.
 - **Missing `confirm`:** tells the agent to check with the user first.
-- **Bad `limit`:** says the allowed range.
+- **Bad `limit`:** the input schema gives `limit` a `minimum` of 1, a `maximum` of 50 and a `default` of 10. The SDK applies the default and rejects other values before the tool runs, with an error naming the bound.
 - **Unexpected errors:** logged, and a generic message is returned.
 
 **`api/internal/mcp/note.md`** covers authentication (OAuth 2.1 following the MCP auth spec, with `notes:read` / `notes:write` / `notes:delete` scopes) and safer deletes (soft delete with undo, elicitation, rate limits, audit log).
@@ -108,12 +108,13 @@ All three tools are `openWorldHint: false`. Errors come back as tool errors (`is
 
 | File | Variable | Default | Purpose |
 |------|----------|---------|---------|
-| `api/.env.example` | `PORT` | `8080` | HTTP port |
+| `api/.env.example` | `HOST` | `127.0.0.1` | Address to listen on: an IP address or `localhost`. There's no authentication, so by default only this machine can connect |
+| | `PORT` | `8080` | HTTP port |
 | | `CORS_ALLOWED_ORIGIN` | `http://localhost:5173` | The only origin allowed to call `/api` from a browser |
 | | `SEED_NOTES` | `true` | Load the demo notes on start |
 | `web/.env.example` | `VITE_API_BASE_URL` | `http://localhost:8080/api` | API base URL |
 
-`godotenv.Load()` reads `api/.env` if it exists, and real environment variables take priority. The CORS middleware wraps `/api` only. When `Origin` exactly matches the allowed origin, it sets `Access-Control-Allow-Origin` (plus `Vary: Origin`), allows `GET, POST, DELETE` and the `Content-Type` header, and answers preflight requests with 204. Other origins get no CORS headers, so the browser blocks them. Their preflights, and preflights for any other method, are refused with 403. Invalid env values (such as a bad port, a wildcard or a path in the origin, or a non-boolean seed flag) stop the server at startup with every problem listed. `/mcp` sends no CORS headers, because MCP clients are not browser pages. It is wrapped in Go's `http.CrossOriginProtection`, which trusts only `CORS_ALLOWED_ORIGIN`. Browser requests from any other origin get `403 {"error":{"code":"forbidden",…}}`. Agents send no `Origin` header and are allowed. The SDK also blocks DNS rebinding on localhost.
+`godotenv.Load()` reads `api/.env` if it exists, and real environment variables take priority. The CORS middleware wraps `/api` only. When `Origin` exactly matches the allowed origin, it sets `Access-Control-Allow-Origin` (plus `Vary: Origin`), allows `GET, POST, DELETE` and the `Content-Type` header, and answers preflight requests with 204. Other origins get no CORS headers, so the browser blocks them. Their preflights, and preflights for any other method, are refused with 403. The origin is stored the way browsers send it: lowercase and without a default port (`:80` for http, `:443` for https). Invalid env values (such as a host name in `HOST`, a bad port, a wildcard or a path in the origin, or a non-boolean seed flag) stop the server at startup with every problem listed. `/mcp` sends no CORS headers, because MCP clients are not browser pages. It is wrapped in Go's `http.CrossOriginProtection`, which trusts only `CORS_ALLOWED_ORIGIN`. Browser requests from any other origin get `403 {"error":{"code":"forbidden",…}}`. Agents send no `Origin` header and are allowed. The SDK also blocks DNS rebinding on localhost.
 
 ## 7. UI
 
@@ -218,7 +219,7 @@ The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Tailw
 
 ```
 api/
-  cmd/server/main.go              config, seed data, mux wiring, graceful shutdown
+  cmd/server/main.go              config, seed data, mux wiring (routes), graceful shutdown  main_test.go
   internal/config/config.go
   internal/note/                  note.go (type, validation)  service.go (+ Repository interface)  memory.go  seed.go  *_test.go
   internal/httpapi/               handlers.go  errors.go  json.go  cors.go  logging.go  recover.go  *_test.go
@@ -244,6 +245,7 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 - **Go service**: a table test for validation (missing title, too long, bad tag, tag lowercasing and de-duplication). Search tests for case-insensitivity across title, body and tags, multi-term AND matching, and newest-first order. Delete of an unknown id returns not found.
 - **Go HTTP** (`httptest`): POST 201 and 422 with the error shape, GET with `search`, DELETE 204 and 404, CORS preflight from the allowed origin vs another origin.
 - **Go MCP** (in-memory transport and SDK client): `create_note` then `search_notes` finds the note. `delete_note` without `confirm` is refused.
+- **Go wiring** (`cmd/server`, real loopback listener): `/api` has CORS and `/mcp` doesn't, `/mcp` refuses other sites and DNS rebinding, unknown routes get the JSON 404, and every request is logged.
 - **Web** (Vitest, Testing Library, MSW): list loading, empty, error and retry. The create flow, including a server 422. Deleting from a list row through the confirm dialog. `<tag-input>` add, normalise, Backspace removal and events. The `/` and `n` shortcuts.
 
 ## 12. Build order (~3 h)

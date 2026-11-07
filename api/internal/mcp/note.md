@@ -6,6 +6,7 @@
 
 This is a local demo, so there is **no authentication**: anyone who can reach the port can use the tools. These protections are in place:
 
+- **Local only by default.** The server listens on `127.0.0.1`, so other machines on the network can't reach it. Setting `HOST` to another address opens it up, so do that only on a network you trust.
 - **Origin checks.** Browser requests are only accepted from the web app's origin (`CORS_ALLOWED_ORIGIN`). This uses Go's `http.CrossOriginProtection`. Other sites get `403`. Agents send no `Origin` header and are allowed.
 - **DNS-rebinding protection.** The SDK rejects requests that reach a localhost address with a non-localhost `Host`.
 - **Limits.** Request bodies are capped at 256 KB, and the same validation runs as for REST (title, body and tag rules).

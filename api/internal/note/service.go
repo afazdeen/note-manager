@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -69,9 +70,12 @@ func (s *Service) Get(ctx context.Context, id string) (Note, error) {
 
 // Search splits query on whitespace and returns the notes that contain every
 // term (ignoring case) in the title, the body or a tag, newest first. An empty
-// query returns every note.
+// query returns every note. Repeated terms are passed to the repository once,
+// so a query like "a a a ..." costs no more than "a".
 func (s *Service) Search(ctx context.Context, query string) ([]Note, error) {
-	return s.repo.Search(ctx, strings.Fields(strings.ToLower(query)))
+	terms := strings.Fields(strings.ToLower(query))
+	slices.Sort(terms)
+	return s.repo.Search(ctx, slices.Compact(terms))
 }
 
 // Delete removes the note with the given id and returns it, or ErrNotFound.

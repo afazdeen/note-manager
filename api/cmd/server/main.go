@@ -50,22 +50,14 @@ func run(logger *slog.Logger) error {
 			return fmt.Errorf("seeding notes: %w", err)
 		}
 	}
-	notes := note.NewService(repo)
 
-	// REST (people, via the web app) and MCP (agents) share one service, so both see the same notes.
-	mcpHandler, err := mcp.NewHandler(notes, cfg.CORSAllowedOrigin, logger)
+	handler, err := routes(note.NewService(repo), cfg.CORSAllowedOrigin, logger)
 	if err != nil {
 		return err
 	}
-
-	mux := http.NewServeMux()
-	mux.Handle("/api/", httpapi.NewHandler(notes, cfg.CORSAllowedOrigin, logger))
-	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("/", httpapi.NotFoundHandler())
-
 	srv := &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           httpapi.LogRequests(logger, httpapi.Recover(logger, mux)),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       60 * time.Second,
@@ -89,6 +81,9 @@ func run(logger *slog.Logger) error {
 		return err // ListenAndServe only returns here on failure, e.g. port in use.
 	case <-ctx.Done():
 	}
+	// Restore the default signal handling, so a second Ctrl+C stops the
+	// server at once instead of waiting for the graceful shutdown.
+	stop()
 
 	logger.Info("shutting down", "timeout", shutdownTimeout)
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -98,4 +93,24 @@ func run(logger *slog.Logger) error {
 	}
 	logger.Info("server stopped")
 	return nil
+}
+
+// routes returns the server's handler: REST under /api (with CORS for
+// allowedOrigin), MCP at /mcp, and a JSON 404 for everything else. Every
+// request is logged, and a panic becomes a 500.
+//
+// REST (people, via the web app) and MCP (agents) share one service, so both
+// see the same notes.
+func routes(notes *note.Service, allowedOrigin string, logger *slog.Logger) (http.Handler, error) {
+	mcpHandler, err := mcp.NewHandler(notes, allowedOrigin, logger)
+	if err != nil {
+		return nil, err
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle("/api/", httpapi.NewHandler(notes, allowedOrigin, logger))
+	mux.Handle("/mcp", mcpHandler)
+	mux.Handle("/", httpapi.NotFoundHandler())
+
+	return httpapi.LogRequests(logger, httpapi.Recover(logger, mux)), nil
 }

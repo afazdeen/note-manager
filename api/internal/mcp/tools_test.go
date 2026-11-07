@@ -209,6 +209,47 @@ func TestListTools(t *testing.T) {
 	}
 }
 
+// The limit's range and default are in the schema, so clients can check them
+// before calling, and the default applies when limit is left out.
+func TestSearchLimit(t *testing.T) {
+	session := connect(t, newService())
+
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	idx := slices.IndexFunc(res.Tools, func(tool *sdk.Tool) bool { return tool.Name == "search_notes" })
+	raw, err := json.Marshal(res.Tools[idx].InputSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties struct {
+			Limit struct {
+				Minimum, Maximum, Default *float64
+			} `json:"limit"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		t.Fatalf("decoding %s: %v", raw, err)
+	}
+	if l := schema.Properties.Limit; l.Minimum == nil || *l.Minimum != 1 || l.Maximum == nil || *l.Maximum != 50 || l.Default == nil || *l.Default != 10 {
+		t.Errorf("limit schema = %s, want minimum 1, maximum 50 and default 10", raw)
+	}
+
+	for i := range 12 {
+		call(t, session, "create_note", map[string]any{"title": fmt.Sprintf("Note %d", i)})
+	}
+	out := structured[searchOutput](t, call(t, session, "search_notes", map[string]any{}))
+	if out.Total != 12 || len(out.Notes) != 10 {
+		t.Errorf("without a limit: total=%d, %d notes; want total=12, 10 notes", out.Total, len(out.Notes))
+	}
+	out = structured[searchOutput](t, call(t, session, "search_notes", map[string]any{"limit": 50}))
+	if len(out.Notes) != 12 {
+		t.Errorf("with limit 50: %d notes, want 12", len(out.Notes))
+	}
+}
+
 func TestCreateThenSearch(t *testing.T) {
 	session := connect(t, newService())
 
@@ -281,8 +322,9 @@ func TestToolErrors(t *testing.T) {
 		{"delete without confirm", "delete_note", map[string]any{"id": "seed"}, "confirm: true"},
 		{"delete with confirm false", "delete_note", map[string]any{"id": "seed", "confirm": false}, "confirm: true"},
 		{"delete an unknown id", "delete_note", map[string]any{"id": "missing", "confirm": true}, "no note has that id"},
-		{"search limit too high", "search_notes", map[string]any{"limit": 51}, "limit must be between 1 and 50"},
-		{"search limit negative", "search_notes", map[string]any{"limit": -1}, "limit must be between 1 and 50"},
+		{"search limit too high", "search_notes", map[string]any{"limit": 51}, "limit: maximum"},
+		{"search limit zero", "search_notes", map[string]any{"limit": 0}, "limit: minimum"},
+		{"search limit negative", "search_notes", map[string]any{"limit": -1}, "limit: minimum"},
 		{"missing required title", "create_note", map[string]any{}, "title"},
 		{"wrong argument type", "create_note", map[string]any{"title": 42}, "title"},
 	}
