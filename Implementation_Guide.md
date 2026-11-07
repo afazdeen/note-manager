@@ -107,18 +107,29 @@ The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) a
 
 ## 7. UI
 
-**Layout.** At 768 px and wider there are two panes: a header (app name over a purple→green gradient bar, and a **New note** button), a left pane (~360 px) with a search box and the note list, and a right pane with the detail view or the create form. Below 768 px there is one pane at a time: the list, then the detail or form with a **Back** button. Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>", is reachable with Tab, and turns red on hover or focus. The detail view shows the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a red **Delete** button. The create form has a title, a body textarea and an editable `<tag-input>`.
+**Layout.** The header holds the app name, the search box and a **New note** button, above a purple→green gradient bar. Below 768 px, the search box wraps onto its own full-width line. At 768 px and wider there are two panes under the header: the note list on the left (~360 px, with a shortcuts hint at the bottom) and the detail view or create form on the right. Below 768 px there is one pane at a time: the list, then the detail or form with a **Back** button.
+- **Selected note:** stored in the URL as `?note=<id>` with `history.pushState` and no router. Links work, and the browser's Back button returns to the list.
+- **Mobile focus:** opening a note moves focus to the detail pane, and Back returns focus to that note's row. Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>", is reachable with Tab, and turns red on hover or focus. The detail view shows the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a red **Delete** button. The create form has a title, a body textarea and an editable `<tag-input>`.
 
 **States**
 
 | Area | Loading | Empty | Error |
 |------|---------|-------|-------|
 | List | 4 skeleton rows; `aria-busy` | No notes: "No notes yet" + **Create your first note**. No matches: "No notes match "x"" + **Clear search** | Inline red banner + **Retry** |
-| Detail | Skeleton block | Nothing selected: "Select a note, or press N to create one" | 404: "This note was deleted" (for example by an agent). Other errors: banner + **Retry** |
+| Detail | Skeleton block | Nothing selected: "Select a note" | 404: "Note not found" (it may have been deleted, for example by an agent) + **Back to notes**. Other errors: banner + **Retry** |
 | Create | Submit button disabled with a spinner | – | Field errors under each input (client-side and from a 422). Other errors: alert at the top of the form; input is kept |
 | Delete | Confirm button shows a spinner | – | Error toast; the note stays |
 
 Successful create or delete shows a toast (an `aria-live="polite"` region). After a create, the new note is selected. After a delete, the row is removed from the list right away and restored if the request fails. If the deleted note was open, the next note is selected. Search is debounced by 250 ms and the previous results stay on screen while new ones load.
+
+**Data layer** (`src/api/`):
+- **Errors:** every failed call rejects with one `ApiError` (`status`, `code`, `message`, `fields`). TanStack Query is told about it, so `error` is typed everywhere. When there's no usable API response, the client adds `network_error` (status 0) or `invalid_response`.
+- **Retries:** queries retry once on network and 5xx errors, and never on 4xx.
+- **Search:** search text is trimmed, its whitespace collapsed and lowercased before it's used as the query key. Lists refetch every 15 s.
+- **Create:** refetches all lists, so the new note shows up in the right place for every search.
+- **Delete:** removes the note from every cached list at once. If the request fails, it puts it back and shows an error toast.
+
+**Toasts:** no library. Success toasts last 4 s and errors 8 s. At most 3 show at once, and each has a dismiss button. Success uses `role="status"` and errors `role="alert"`.
 
 **Keyboard** (single-key shortcuts don't fire while typing in a field)
 
@@ -182,11 +193,14 @@ api/
   go.mod  .env.example
 web/
   src/config/env.ts               the only reader of import.meta.env (typed, validated)
-  src/lib/queryClient.ts
+  src/lib/                        queryClient.ts  format.ts (relative and full dates)
   src/api/                        client.ts  notes.ts (query hooks)  types.ts
-  src/components/                 NoteList  NoteDetail  CreateNoteForm  SearchBar  ConfirmDialog  Toast  EmptyState  Skeleton
+  src/components/                 NoteList  NoteDetail  CreateNoteForm  SearchBar  ConfirmDialog  EmptyState  ErrorState  Skeleton  TagChips  buttonStyles.ts
+  src/components/toast/           ToastProvider.tsx  toast-context.ts (useToast)
   src/web-components/tag-input/   tag-input.ts  TagInput.tsx  tag-input.test.ts
-  src/hooks/useShortcuts.ts       src/test/ (MSW server, setup, render helper)   App.tsx  main.tsx  index.css
+  src/hooks/                      useShortcuts  useNoteParam (?note=)  useDebouncedValue  useMediaQuery
+  src/test/                       MSW handlers + in-memory db, server, setup, render helpers
+  App.tsx  main.tsx  index.css
   .env.example  package.json  vite.config.ts  eslint.config.js
 .github/workflows/                api.yml  web.yml (lint, test, build when that app's files change, on push and PR)
 README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
@@ -212,11 +226,11 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 
 ## 13. Out of scope
 
-Editing notes, users and authentication (described in `note.md` only), SQLite and other persistence, pagination, Markdown rendering, live push updates (the UI polls instead), URL routing and deep links, dark mode, Docker and deployment, i18n.
+Editing notes, users and authentication (described in `note.md` only), SQLite and other persistence, pagination, Markdown rendering, live push updates (the UI polls instead), a client-side router (only `?note=` is in the URL), dark mode, Docker and deployment, i18n.
 
 ## 14. Assumptions
 
 - There is one shared notebook with no users. Notes are plain text.
-- React 19, Tailwind v4, Go 1.22+ (1.27 installed). The selected note is kept in component state, not in the URL.
+- React 19, Tailwind v4, Go 1.22+ (1.27 installed). The selected note is kept in the URL (`?note=<id>`); the search text is not.
 - `delete_note` needs `confirm: true` as an extra safeguard on top of the `destructiveHint` annotation.
 - You can delete from a list row, from the detail view, or with the `Delete` key. Every delete goes through the confirm dialog.
