@@ -8,5 +8,7 @@ export const buttonStyles = {
   secondary: `${base} border border-border bg-bg px-3 py-1.5 text-ink hover:bg-purple-50`,
   danger: `${base} border border-red-600 bg-bg px-3 py-1.5 text-red-700 hover:bg-red-50`,
   dangerSolid: `${base} bg-red-600 px-3 py-2 text-white hover:bg-red-700`,
+  /** Gray until hovered or keyboard-focused, then red. For destructive actions that shouldn't shout. */
+  dangerSubtle: `${base} border border-border bg-bg px-3 py-1.5 text-ink-muted hover:border-red-600 hover:bg-red-50 hover:text-red-700 focus-visible:border-red-600 focus-visible:bg-red-50 focus-visible:text-red-700`,
   ghost: `${base} px-2 py-1.5 text-purple-700 hover:bg-purple-50`,
 } as const

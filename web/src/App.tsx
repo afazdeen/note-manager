@@ -138,7 +138,7 @@ export function App() {
       </a>
 
       <header>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-4 px-4 py-3 md:gap-x-10">
           <h1 className="text-lg font-semibold tracking-tight">Team Notes</h1>
           <SearchBar
             value={search}
@@ -167,7 +167,7 @@ export function App() {
       <main
         id="main"
         tabIndex={-1}
-        className="flex min-h-0 flex-1 focus:outline-hidden md:grid md:grid-cols-[22.5rem_1fr]"
+        className="flex min-h-0 flex-1 focus:outline-hidden md:grid md:grid-cols-[22.5rem_1fr] lg:grid-cols-[26rem_1fr]"
       >
         <section
           aria-label="Note list"

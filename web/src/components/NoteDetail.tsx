@@ -8,6 +8,10 @@ import { ErrorState } from './ErrorState'
 import { TrashIcon } from './icons'
 import { Skeleton } from './Skeleton'
 
+/** The open note sits in a light purple card; the loading skeleton uses the same shape. */
+const cardWrap = 'p-4 md:p-6 lg:p-8'
+const card = 'mx-auto max-w-3xl rounded-2xl border border-purple-100 bg-purple-50 p-5 md:p-8'
+
 interface NoteDetailProps {
   noteId: string | null
   onClose: () => void
@@ -40,33 +44,35 @@ export function NoteDetail({ noteId, onClose, onTagClick, onDelete }: Readonly<N
 
   if (note) {
     return (
-      <article className="mx-auto max-w-3xl px-4 py-6 md:px-8">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="text-2xl font-semibold tracking-tight break-words text-ink">{note.title}</h2>
-            <p className="mt-1 text-sm text-ink-muted">
-              Created <time dateTime={note.createdAt}>{formatFullDate(note.createdAt)}</time>
-            </p>
+      <div className={cardWrap}>
+        <article className={card}>
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h2 className="text-2xl font-semibold tracking-tight break-words text-ink">{note.title}</h2>
+              <p className="mt-1 text-sm text-ink-muted">
+                Created <time dateTime={note.createdAt}>{formatFullDate(note.createdAt)}</time>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onDelete(note)}
+              aria-keyshortcuts="Delete"
+              className={`${buttonStyles.dangerSubtle} shrink-0`}
+            >
+              <TrashIcon />
+              Delete
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => onDelete(note)}
-            aria-keyshortcuts="Delete"
-            className={`${buttonStyles.danger} shrink-0`}
-          >
-            <TrashIcon />
-            Delete
-          </button>
-        </div>
-        {note.tags.length > 0 && (
-          <TagInput label="Tags" tags={note.tags} readOnly onTagClick={onTagClick} className="mt-4" />
-        )}
-        {note.body ? (
-          <p className="mt-6 leading-relaxed break-words whitespace-pre-wrap text-ink">{note.body}</p>
-        ) : (
-          <p className="mt-6 text-ink-muted italic">This note has no body.</p>
-        )}
-      </article>
+          {note.tags.length > 0 && (
+            <TagInput label="Tags" tags={note.tags} readOnly onTagClick={onTagClick} className="mt-4" />
+          )}
+          {note.body ? (
+            <p className="mt-6 leading-relaxed break-words whitespace-pre-wrap text-ink">{note.body}</p>
+          ) : (
+            <p className="mt-6 text-ink-muted italic">This note has no body.</p>
+          )}
+        </article>
+      </div>
     )
   }
 
@@ -86,14 +92,16 @@ export function NoteDetail({ noteId, onClose, onTagClick, onDelete }: Readonly<N
 
 function NoteDetailSkeleton() {
   return (
-    <div aria-busy="true" className="mx-auto max-w-3xl space-y-3 px-4 py-6 md:px-8">
-      <p className="sr-only">Loading note…</p>
-      <Skeleton className="h-7 w-2/3" />
-      <Skeleton className="h-4 w-40" />
-      <div className="space-y-2 pt-4">
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-3/4" />
+    <div className={cardWrap}>
+      <div aria-busy="true" className={`${card} space-y-3`}>
+        <p className="sr-only">Loading note…</p>
+        <Skeleton className="h-7 w-2/3" />
+        <Skeleton className="h-4 w-40" />
+        <div className="space-y-2 pt-4">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-3/4" />
+        </div>
       </div>
     </div>
   )

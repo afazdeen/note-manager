@@ -10,7 +10,7 @@ A small notes app that people (React UI) and AI agents (MCP) both use. One Go se
 | R2 | React + TypeScript UI: list and detail views, loading/empty/error states, keyboard friendly | `web/`: Vite, TanStack Query, Tailwind |
 | R3 | One Web Component used inside React | `<tag-input>` tag picker, used in the create form and in the note detail |
 | R4 | MCP server with at least 2 tools, plus a note on auth and destructive actions | `/mcp` on the same server: `search_notes`, `create_note`, `delete_note`, plus `api/internal/mcp/note.md` |
-| R5 | README: setup, decisions, next steps, AI usage | `README.md` at the root |
+| R5 | README: setup, decisions, next steps, AI usage | `README.md` at the root: setup, using MCP, checks, key decisions, what I'd do with more time, how I used AI tools |
 
 ## 2. Architecture
 
@@ -117,11 +117,11 @@ All three tools are `openWorldHint: false`. Errors come back as tool errors (`is
 
 ## 7. UI
 
-**Layout.** The header holds the app name, the search box and a **New note** button, above a purple→green gradient bar. Below 768 px, the search box wraps onto its own full-width line. At 768 px and wider there are two panes under the header: the note list on the left (~360 px, with a shortcuts hint at the bottom) and the detail view on the right. Below 768 px there is one pane at a time: the list, then the detail with a **Back** button.
+**Layout.** The header holds the app name, the search box and a **New note** button, above a purple→green gradient bar. There's a wide gap between the app name and the search box: 40 px from 768 px up. Below 768 px, the search box wraps onto its own full-width line, 16 px below the name. At 768 px and wider there are two panes under the header: the note list on the left (360 px, widening to 416 px from 1024 px, with a shortcuts hint at the bottom) and the detail view on the right. Below 768 px there is one pane at a time: the list, then the detail with a **Back** button.
 - **Selected note:** stored in the URL as `?note=<id>` with `history.pushState` and no router. Links work, and the browser's Back button returns to the list.
 - **Mobile focus:** opening a note moves focus to the detail pane, and Back returns focus to that note's row.
 
-Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>" and turns red on hover or focus. It sits beside the row's button, not inside it, because buttons can't nest. The list is one Tab stop (the last-focused row, then the selected row, then the first), followed by that row's delete button. The detail view shows the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a red **Delete** button.
+Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>" and turns red on hover or focus. It sits beside the row's button, not inside it, because buttons can't nest. The list is one Tab stop (the last-focused row, then the selected row, then the first), followed by that row's delete button. The detail view shows the open note in a card with rounded corners (`purple-50` background, `purple-100` border). Its loading skeleton uses the same card shape. The card holds the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a **Delete** button. The button is gray and only turns red on hover or keyboard focus.
 
 **Create dialog.** **New note**, the `n` key, or **Create your first note** (in the empty state) opens a native `<dialog>` with `showModal()`. The browser makes the page behind it inert and keeps Tab inside, so no focus-trap code is needed. It holds a title, a body textarea and an editable `<tag-input>`.
 - **Focus:** goes to the title when the dialog opens, and back to **New note** when it closes.
@@ -200,18 +200,18 @@ The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Tailw
 | Token | Hex | Used for |
 |-------|-----|----------|
 | `bg` / `white` | `#ffffff` | Page background / text on filled purple and red buttons (same value) |
-| `surface` | `#faf8fd` | List pane and cards |
+| `surface` | `#faf8fd` | List pane background |
 | `border` | `#e7e2f0` | Dividers and input borders |
 | `ink` / `ink-muted` | `#1d1630` / `#5e5873` | Main text / secondary text and dates |
-| `purple-50` | `#f6effe` | Hover and the selected list row |
-| `purple-100` | `#ead9fc` | Tag chip background |
+| `purple-50` | `#f6effe` | Hover, the selected list row, and the open-note card background |
+| `purple-100` | `#ead9fc` | Tag chip background and the open-note card border |
 | `purple-500` | `#9d52e8` | **Base**: focus ring, selected-row edge, gradient start |
 | `purple-600` | `#8636d6` | Primary button background (white text, ~6:1) |
 | `purple-700` | `#6c25b3` | Primary hover, links, tag chip text |
 | `green-50` | `#ebfff4` | Success toast background |
-| `green-400` | `#33ff94` | **Base**: gradient end, small accent dot only (never text) |
+| `green-400` | `#33ff94` | **Base**: gradient end only (never text) |
 | `green-700` | `#0a7a40` | Success text and icons (~5.4:1) |
-| `red-50` / `red-600` / `red-700` | `#fef2f2` / `#dc2626` / `#b91c1c` | Error banner background / error text and Delete button / Delete hover |
+| `red-50` / `red-600` / `red-700` | `#fef2f2` / `#dc2626` / `#b91c1c` | Error banner and Delete-hover background / error text, borders and the confirm dialog's **Delete note** button / Delete hover text and Retry text |
 | `gradient-brand` | `linear-gradient(90deg, #9d52e8, #33ff94)` | Header bar and the empty-state illustration accent (utility: `bg-gradient-brand`) |
 
 ## 10. Folder layout
@@ -222,7 +222,7 @@ api/
   internal/config/config.go
   internal/note/                  note.go (type, validation)  service.go (+ Repository interface)  memory.go  seed.go  *_test.go
   internal/httpapi/               handlers.go  errors.go  json.go  cors.go  logging.go  recover.go  *_test.go
-  internal/mcp/                   server.go  tools.go  tools_test.go  note.md
+  internal/mcp/                   server.go  tools.go  schema.go (portable schemas)  tools_test.go  note.md
   go.mod  .env.example
 web/
   src/config/env.ts               the only reader of import.meta.env (typed, validated)
@@ -233,7 +233,7 @@ web/
   src/web-components/tag-input/   tag-input.ts  tag-rules.ts  TagInput.tsx  tag-input-jsx.d.ts  *.test.ts(x)
   src/hooks/                      useShortcuts  useNoteParam (?note=)  useDebouncedValue  useMediaQuery
   src/test/                       MSW handlers + in-memory db, server, setup, render helpers
-  App.tsx  main.tsx  index.css
+  App.tsx  main.tsx  index.css    App.test.tsx  CreateNote.test.tsx  DeleteNote.test.tsx (app-level flows)
   .env.example  package.json  vite.config.ts  eslint.config.js
 .github/workflows/                api.yml  web.yml (lint, test, build when that app's files change, on push and PR)
 README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
