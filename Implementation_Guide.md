@@ -84,15 +84,25 @@ Routing uses Go 1.22+ `http.ServeMux` method patterns. Handlers depend on a smal
 
 ## 5. MCP server (`/mcp`)
 
-The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) and is mounted with `NewStreamableHTTPHandler` on the same mux. Inputs and outputs are typed Go structs, so the SDK generates the JSON schemas.
+The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk` v1.8.0) and is mounted at `/mcp` on the same mux, calling the same `note.Service` as REST.
+- **Transport:** Streamable HTTP, **stateless**, with plain JSON responses. Each request stands alone, because the tools need no session and no messages from the server. The cost is that server-to-client features such as elicitation aren't available; see `note.md`.
+- **Schemas:** inputs and outputs are typed Go structs with `jsonschema` descriptions on every field. The schemas are generated from them with `github.com/google/jsonschema-go`, the SDK's own schema library, used directly. Lists are then rewritten from `["null","array"]` to plain `"array"`, so clients that only accept one type per field can use the tools. A test fails if a multi-type field comes back.
+- **Server instructions:** the server tells agents what the notebook is and when deleting is allowed.
 
 | Tool | Input | Output | Annotations |
 |------|-------|--------|-------------|
-| `search_notes` | `search?` string, `limit?` int (1–50, default 10) | `{notes, total}` | `readOnlyHint: true` |
-| `create_note` | `title`, `body?`, `tags?` | created `Note` | `readOnlyHint: false`, `destructiveHint: false` |
+| `search_notes` | `search?` string (empty = most recent), `limit?` int (1–50, default 10) | `{notes, total}` | `readOnlyHint: true` |
+| `create_note` | `title`, `body?`, `tags?` | created note | `readOnlyHint: false`, `destructiveHint: false` |
 | `delete_note` | `id`, `confirm` bool | `{deleted: id, title}` | `destructiveHint: true`, `idempotentHint: true` |
 
-`delete_note` refuses unless `confirm` is `true`. It returns a tool error that tells the agent to check with the user first. Validation errors come back as tool errors (`isError: true`) with the same field messages as REST. **`api/internal/mcp/note.md`** is written *after* the server works. It covers authentication (OAuth 2.1 bearer tokens following the MCP auth spec, scoped `notes:read` / `notes:write` / `notes:delete`), destructive actions (annotations, explicit confirm, client-side human approval, audit log, soft delete) and rate limiting.
+All three tools are `openWorldHint: false`. Errors come back as tool errors (`isError: true`) the agent can read and act on:
+- **Validation:** the same field messages as REST.
+- **Unknown id:** suggests running `search_notes`.
+- **Missing `confirm`:** tells the agent to check with the user first.
+- **Bad `limit`:** says the allowed range.
+- **Unexpected errors:** logged, and a generic message is returned.
+
+**`api/internal/mcp/note.md`** covers authentication (OAuth 2.1 following the MCP auth spec, with `notes:read` / `notes:write` / `notes:delete` scopes) and safer deletes (soft delete with undo, elicitation, rate limits, audit log).
 
 ## 6. Environment and CORS
 
@@ -103,7 +113,7 @@ The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) a
 | | `SEED_NOTES` | `true` | Load the demo notes on start |
 | `web/.env.example` | `VITE_API_BASE_URL` | `http://localhost:8080/api` | API base URL |
 
-`godotenv.Load()` reads `api/.env` if it exists, and real environment variables take priority. The CORS middleware wraps `/api` only. When `Origin` exactly matches the allowed origin, it sets `Access-Control-Allow-Origin` (plus `Vary: Origin`), allows `GET, POST, DELETE` and the `Content-Type` header, and answers preflight requests with 204. Other origins get no CORS headers, so the browser blocks them. Their preflights, and preflights for any other method, are refused with 403. Invalid env values (such as a bad port, a wildcard or a path in the origin, or a non-boolean seed flag) stop the server at startup with every problem listed. `/mcp` gets no CORS headers because MCP clients are not browser pages.
+`godotenv.Load()` reads `api/.env` if it exists, and real environment variables take priority. The CORS middleware wraps `/api` only. When `Origin` exactly matches the allowed origin, it sets `Access-Control-Allow-Origin` (plus `Vary: Origin`), allows `GET, POST, DELETE` and the `Content-Type` header, and answers preflight requests with 204. Other origins get no CORS headers, so the browser blocks them. Their preflights, and preflights for any other method, are refused with 403. Invalid env values (such as a bad port, a wildcard or a path in the origin, or a non-boolean seed flag) stop the server at startup with every problem listed. `/mcp` sends no CORS headers, because MCP clients are not browser pages. It is wrapped in Go's `http.CrossOriginProtection`, which trusts only `CORS_ALLOWED_ORIGIN`. Browser requests from any other origin get `403 {"error":{"code":"forbidden",…}}`. Agents send no `Origin` header and are allowed. The SDK also blocks DNS rebinding on localhost.
 
 ## 7. UI
 

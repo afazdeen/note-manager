@@ -2,12 +2,10 @@
 
 A small team notes app that people and AI agents can both use:
 
-- **`api/`**: a Go server. The REST API is under `/api`, and the MCP server will be at `/mcp`. Notes are kept in memory.
+- **`api/`**: a Go server. The REST API is under `/api` and the MCP server is at `/mcp`. Both use the same note service, so people and agents see the same notes. Notes are kept in memory.
 - **`web/`**: React + TypeScript (Vite), TanStack Query, Tailwind, and a `<tag-input>` Web Component.
 
-The plan, decisions and design tokens are in [Implementation_Guide.md](Implementation_Guide.md).
-
-> **Status:** the REST API is done (`/api/notes`: list/search, get, create, delete). The web app shows the app shell only. MCP and the UI features come next.
+The plan, decisions and design tokens are in [Implementation_Guide.md](Implementation_Guide.md). Authentication and destructive actions for MCP are covered in [api/internal/mcp/note.md](api/internal/mcp/note.md).
 
 ## Prerequisites
 
@@ -47,6 +45,36 @@ npm run dev               # http://localhost:5173
 | `VITE_API_BASE_URL` | `http://localhost:8080/api` | API base URL, read only in `src/config/env.ts` |
 
 The dev server always uses port 5173 so that it matches `CORS_ALLOWED_ORIGIN`.
+
+## Using the MCP server
+
+With the API running, agents connect to `http://localhost:8080/mcp` over Streamable HTTP. It offers three tools:
+- `search_notes` (read-only)
+- `create_note`
+- `delete_note` (destructive; needs `confirm: true`)
+
+**MCP Inspector** opens a UI in the browser. Choose transport **Streamable HTTP**, set the URL to `http://localhost:8080/mcp`, and keep the default **Via Proxy** connection:
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+Or use the CLI, with no UI:
+
+```bash
+npx @modelcontextprotocol/inspector --cli http://localhost:8080/mcp --transport http --method tools/list
+npx @modelcontextprotocol/inspector --cli http://localhost:8080/mcp --transport http \
+  --method tools/call --tool-name search_notes --tool-arg search=retro
+```
+
+**Claude Code**:
+
+```bash
+claude mcp add --transport http team-notes http://localhost:8080/mcp
+claude mcp list          # team-notes should show as connected
+```
+
+Then ask, for example: "Search my team notes for planning", "Create a note called Release checklist tagged release", or "Delete the Release checklist note". Claude Code asks before running a tool. For `delete_note`, the agent has to confirm with you first.
 
 ## Checks
 

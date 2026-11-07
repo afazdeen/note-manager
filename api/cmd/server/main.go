@@ -17,6 +17,7 @@ import (
 
 	"note-manager/api/internal/config"
 	"note-manager/api/internal/httpapi"
+	"note-manager/api/internal/mcp"
 	"note-manager/api/internal/note"
 )
 
@@ -51,8 +52,15 @@ func run(logger *slog.Logger) error {
 	}
 	notes := note.NewService(repo)
 
+	// REST (people, via the web app) and MCP (agents) share one service, so both see the same notes.
+	mcpHandler, err := mcp.NewHandler(notes, cfg.CORSAllowedOrigin, logger)
+	if err != nil {
+		return err
+	}
+
 	mux := http.NewServeMux()
 	mux.Handle("/api/", httpapi.NewHandler(notes, cfg.CORSAllowedOrigin, logger))
+	mux.Handle("/mcp", mcpHandler)
 	mux.Handle("/", httpapi.NotFoundHandler())
 
 	srv := &http.Server{
@@ -68,6 +76,8 @@ func run(logger *slog.Logger) error {
 	go func() {
 		logger.Info("server listening",
 			"addr", srv.Addr,
+			"rest", "/api",
+			"mcp", "/mcp",
 			"corsAllowedOrigin", cfg.CORSAllowedOrigin,
 			"seedNotes", cfg.SeedNotes,
 		)
