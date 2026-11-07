@@ -85,7 +85,7 @@ Routing uses Go 1.22+ `http.ServeMux` method patterns. Handlers depend on a smal
 ## 5. MCP server (`/mcp`)
 
 The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk` v1.8.0) and is mounted at `/mcp` on the same mux, calling the same `note.Service` as REST.
-- **Transport:** Streamable HTTP, **stateless**, with plain JSON responses. Each request stands alone, because the tools need no session and no messages from the server. The cost is that server-to-client features such as elicitation aren't available; see `note.md`.
+- **Transport:** Streamable HTTP, **stateless**, with plain JSON responses. Each request stands alone, because the tools need no session. Since the 2026-07-28 spec (which SDK v1.8.0 supports), asking the user mid-call (elicitation) doesn't need a session either: the tool returns an "input required" result and the client retries with the answer. The tools don't use it yet; `note.md` describes how `delete_note` would.
 - **Schemas:** inputs and outputs are typed Go structs with `jsonschema` descriptions on every field. The schemas are generated from them with `github.com/google/jsonschema-go`, the SDK's own schema library, used directly. Lists are then rewritten from `["null","array"]` to plain `"array"`, so clients that only accept one type per field can use the tools. A test fails if a multi-type field comes back.
 - **Server instructions:** the server tells agents what the notebook is and when deleting is allowed.
 
@@ -102,7 +102,7 @@ All three tools are `openWorldHint: false`. Errors come back as tool errors (`is
 - **Bad `limit`:** the input schema gives `limit` a `minimum` of 1, a `maximum` of 50 and a `default` of 10. The SDK applies the default and rejects other values before the tool runs, with an error naming the bound.
 - **Unexpected errors:** logged, and a generic message is returned.
 
-**`api/internal/mcp/note.md`** covers authentication (OAuth 2.1 following the MCP auth spec, with `notes:read` / `notes:write` / `notes:delete` scopes) and safer deletes (soft delete with undo, elicitation, rate limits, audit log).
+**`api/internal/mcp/note.md`** covers what protects `/mcp` today (including the DNS-rebinding gap inside Docker), authentication (OAuth 2.1 following the 2026-07-28 MCP auth spec: Client ID Metadata Documents, `notes:read` / `notes:write` / `notes:delete` scopes, step-up authorization for deletes) and safer deletes (treating notes as untrusted input, soft delete with undo, elicitation, agents deleting only their own notes, a confirmation tied to one note, a switch to turn deletes off, rate limits, audit log).
 
 ## 6. Environment and CORS
 
@@ -158,7 +158,7 @@ Successful create or delete shows a toast (an `aria-live="polite"` region). Afte
 | Key | Action |
 |-----|--------|
 | `/` | Focus search |
-| `n` | New note |
+| `n` | New note (either case, so it works with Caps Lock or Shift) |
 | `↑` / `↓` | Move through the list (focus moves between rows) |
 | `Enter` | Open the focused note |
 | `Delete` (or `Backspace`, labelled "delete" on Mac) | Delete the note of the focused list row (its row or its delete button), otherwise the open note (opens the confirm dialog) |

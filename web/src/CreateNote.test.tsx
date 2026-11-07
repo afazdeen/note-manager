@@ -74,6 +74,29 @@ describe('opening and closing', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(newNoteButton()).toHaveFocus()
   })
+
+  it('opens with "N" too, so Shift or Caps Lock doesn\'t matter', async () => {
+    const { user } = await renderApp()
+
+    await user.keyboard('{Shift>}N{/Shift}')
+    expect(titleField()).toHaveFocus()
+    await user.click(within(dialog()).getByRole('button', { name: 'Cancel' }))
+
+    // Caps Lock: the key is "N" with no modifier held.
+    await user.keyboard('N')
+    expect(titleField()).toHaveFocus()
+    expect(titleField()).toHaveValue('')
+  })
+
+  it('does not open while typing in the search box, in either case', async () => {
+    const { user } = await renderApp()
+
+    await user.click(screen.getByRole('searchbox', { name: 'Search notes' }))
+    await user.keyboard('nN')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Search notes' })).toHaveValue('nN')
+  })
 })
 
 describe('validation', () => {

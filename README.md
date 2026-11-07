@@ -97,7 +97,7 @@ The new note appears in the web app within 15 seconds. To look at the tools dire
 - **Service/repository split.** `note.Service` owns the rules: validation, ids, timestamps and parsing the search text. `note.Repository` only stores, matches and orders notes, the way SQL would. **Moving to SQLite means writing one new repository**; the service, REST, MCP and their tests stay the same. *Trade-off:* the in-memory version loses data on restart.
 - **One server for REST and MCP.** People and agents can't drift apart: same notes, same validation, same errors. *Trade-off:* they scale together. That's fine at this size, and they could be split later because both only depend on the service.
 - **Standard library first (Go).** `net/http` routing, `slog` and Go's cross-origin protection, plus the official MCP SDK. There's less to learn and maintain, at the cost of writing a little middleware by hand.
-- **Stateless MCP with JSON responses.** It's simple, easy to test with curl and easy to scale. *Trade-off:* the server can't ask the client anything back mid-call (needed for elicitation).
+- **Stateless MCP with JSON responses.** It's simple, easy to test with curl and easy to scale. Since the 2026-07-28 MCP spec, the server can still ask the user mid-call (elicitation) without a session. *Trade-off:* only clients that support that spec can be asked this way; older ones would fall back to a confirmation the agent passes.
 - **Optimistic UI.** Deletes show at once and roll back with an error toast if the server fails. Searches keep the previous results on screen while loading. Lists refetch every 15 s so agents' changes appear. *Trade-off:* this polls instead of pushing live updates.
 - **Native `<dialog>` and a framework-free Web Component.** The browser handles the modal focus trap. `<tag-input>` works in any framework and picks up the app's colour tokens through CSS variables. *Trade-off:* shadow DOM needed some extra care in tests.
 - **Accessibility as a requirement, not polish.** Every action works from the keyboard and every control has a visible focus ring. Tap targets are at least 24px, and there's no sideways scrolling at 375px. The palette is locked to the design tokens.
@@ -113,11 +113,52 @@ The new note appears in the web app within 15 seconds. To look at the tools dire
 
 ## How I used AI tools
 
-I built this with **Claude Code** in VS Code, one small step at a time:
+I used **Claude Code** (in VS Code) as a pair programmer. I made the decisions; it planned, wrote code and tests, and ran the checks. I reviewed and committed each step before starting the next.
 
-- **Planning.** It turned the brief and my decisions into [Implementation_Guide.md](Implementation_Guide.md) and asked about the unclear parts.
-- **Ground rules.** [CLAUDE.md](CLAUDE.md) told it to follow the guide, ask before adding dependencies or changing a decision, and run every check after each change.
-- **Building and verifying.** It wrote code and tests, ran the checks, and tested the real app in a headless browser. That caught problems the unit tests couldn't, such as a stale Web Component after hot reload and clipped focus rings.
-- **Decisions stayed mine.** For example: a dialog for creating notes, delete buttons in the list, and approving the extra schema library for MCP.
+**Decisions I gave it up front**
+- **Backend:** Go with the standard library, plus the official MCP SDK and godotenv. Notes in memory, with a few seeded notes so the demo isn't empty.
+- **One server:** REST at `/api` and MCP at `/mcp`, sharing one note service.
+- **Frontend:** React + TypeScript with Vite, TanStack Query and Tailwind. Tests with Vitest, Testing Library and MSW.
+- **Web Component:** a `<tag-input>` tag picker, used in the create form and in the note detail.
+- **Settings:** `.env.example` files for both apps, and CORS that only allows the web app.
+- **Colours:** purple `#9d52e8` and green `#33ff94` as base colours (lighter or darker shades where needed). Red only for errors and delete.
+- **Standards:** responsive, keyboard friendly, user-centred design.
 
-> **TODO (Afaz):** add 2–3 concrete examples of how you used it, e.g. a prompt that worked well, something you corrected or rejected, and what you checked by hand.
+**How I prompted it**
+- **Plan first:** *"Before writing any code, create an Implementation_Guide.md … keep it simple … ask me for clarifications if required."*
+- **Set rules:** a short [CLAUDE.md](CLAUDE.md). Follow the guide, ask before adding packages or changing a decision, use only the colour tokens, keep changes small, run all checks after each change, and never commit secrets.
+- **One prompt per step**, each with clear acceptance criteria. For example: *"Scaffold both apps … then run all checks, start both apps, and show me a curl that proves CORS works for the web origin and not for others."*
+- **Ask for proof, not just code:** curl output for every endpoint, tests for the error cases, and instructions for testing MCP with MCP Inspector and Claude Code.
+- **Audit before finishing:** *"Go through the guide's requirements checklist and show me a table of what's met, partly met or missing, with evidence. Fix only the gaps."*
+
+**AI proposals I changed or rejected**
+- **Search parameter:** it used `q`; I renamed it to `search` in both REST and MCP.
+- **Delete:** it planned delete only in the note view; I asked for a delete button on each list row too.
+- **Search box:** it put it above the list; I moved it into the header.
+- **Selected note:** it kept it in component state; I wanted it in the URL (`?note=id`) so links and the Back button work.
+- **New note:** it planned a form in the right pane; I asked for a dialog instead.
+- **Backend files:** it suggested a `notes` package with `model.go` and `repository.go`; I chose a `note` package split into `note.go`, `service.go` and `memory.go`.
+- **Go module path:** it used `github.com/afazdeen/note-manager/api`; I changed it to `note-manager/api`.
+- **Delete button colour:** I made the note view's Delete gray until hover, instead of always red.
+- **Layout:** I asked for a wider list on large screens, a light-purple card for the open note, and more space between the title and the search bar.
+- **New dependency:** it asked before adding `jsonschema-go` to fix MCP schema warnings, and I approved it.
+
+**Changes I made myself**
+- **Listen address:** the API now listens on `127.0.0.1` by default (new `HOST` setting). There's no authentication, so only this machine can connect unless you change it.
+- **Validation:** titles can't contain control characters or text-direction characters, checked on both the server and the client.
+- **Hardening:**
+  - The web client now checks the shape of API responses instead of trusting them.
+  - Repeated search words are only searched once.
+  - The CORS origin setting is normalised (for example, a default port is dropped).
+- **UX:**
+  - Toasts pause while you hover or focus them.
+  - A deleted note doesn't leave a dead entry in the browser history.
+  - Tag chips read correctly with a screen reader.
+  - The search box border is darker so it's easier to see.
+- **Docker:** I dockerized both apps with multi-stage builds and added one Compose file.
+  - Setup is a single command (`docker compose up --build`), with no local Go or Node needed.
+  - The final images hold only what runs the app, so they're small: about 19 MB for the API and 30 MB for the web app.
+
+**What I checked myself**
+- **Every step:** I reviewed the summary and the changes, then committed before moving on.
+- **The browser:** I tried the features myself. I found *"Save note is not working … `el.commitPending is not a function`"*, reported it, and it traced the cause to a stale Web Component left by hot reload, then fixed that.

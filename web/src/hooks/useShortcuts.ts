@@ -14,8 +14,18 @@ function isTyping(event: KeyboardEvent): boolean {
 }
 
 /**
- * Global single-key shortcuts, keyed by KeyboardEvent.key (e.g. "/").
- * They don't fire while typing in a field or with Ctrl, Cmd or Alt held.
+ * The key to look up: letters in lowercase, so a letter shortcut such as "n"
+ * also works with Caps Lock on or Shift held. Other keys ("/", "Delete") are
+ * used as they are.
+ */
+function shortcutKey(event: KeyboardEvent): string {
+  return /^[a-z]$/i.test(event.key) ? event.key.toLowerCase() : event.key
+}
+
+/**
+ * Global single-key shortcuts, keyed by KeyboardEvent.key (e.g. "/"); letter
+ * keys are given in lowercase and match either case. They don't fire while
+ * typing in a field or with Ctrl, Cmd or Alt held.
  */
 export function useShortcuts(shortcuts: Shortcuts): void {
   const latest = useRef(shortcuts)
@@ -28,7 +38,7 @@ export function useShortcuts(shortcuts: Shortcuts): void {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || isTyping(event)) {
         return
       }
-      const handler = latest.current[event.key]
+      const handler = latest.current[shortcutKey(event)]
       if (handler) {
         event.preventDefault()
         handler(event)
