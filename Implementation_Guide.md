@@ -107,9 +107,19 @@ The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) a
 
 ## 7. UI
 
-**Layout.** The header holds the app name, the search box and a **New note** button, above a purple→green gradient bar. Below 768 px, the search box wraps onto its own full-width line. At 768 px and wider there are two panes under the header: the note list on the left (~360 px, with a shortcuts hint at the bottom) and the detail view or create form on the right. Below 768 px there is one pane at a time: the list, then the detail or form with a **Back** button.
+**Layout.** The header holds the app name, the search box and a **New note** button, above a purple→green gradient bar. Below 768 px, the search box wraps onto its own full-width line. At 768 px and wider there are two panes under the header: the note list on the left (~360 px, with a shortcuts hint at the bottom) and the detail view on the right. Below 768 px there is one pane at a time: the list, then the detail with a **Back** button.
 - **Selected note:** stored in the URL as `?note=<id>` with `history.pushState` and no router. Links work, and the browser's Back button returns to the list.
-- **Mobile focus:** opening a note moves focus to the detail pane, and Back returns focus to that note's row. Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>", is reachable with Tab, and turns red on hover or focus. The detail view shows the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a red **Delete** button. The create form has a title, a body textarea and an editable `<tag-input>`.
+- **Mobile focus:** opening a note moves focus to the detail pane, and Back returns focus to that note's row.
+
+Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>" and turns red on hover or focus. It sits beside the row's button, not inside it, because buttons can't nest. The list is one Tab stop (the last-focused row, then the selected row, then the first), followed by that row's delete button. The detail view shows the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a red **Delete** button.
+
+**Create dialog.** **New note**, the `n` key, or **Create your first note** (in the empty state) opens a native `<dialog>` with `showModal()`. The browser makes the page behind it inert and keeps Tab inside, so no focus-trap code is needed. It holds a title, a body textarea and an editable `<tag-input>`.
+- **Focus:** goes to the title when the dialog opens, and back to **New note** when it closes.
+- **Keys:** Enter in the title moves to the body. Ctrl/⌘+Enter saves. Esc cancels, except while saving.
+- **Validation:** the same rules as the server (`src/lib/validateNote.ts`). The first invalid field gets focus.
+- **Unfinished tag:** on save, a typed but un-added tag is committed with `commitPending()`. If it's invalid, saving stops.
+- **Server errors:** 422 field messages appear under the matching fields. Other errors appear at the top of the form, and the input is kept.
+- **After saving:** the dialog closes, the new note is selected and a "Note created" toast shows.
 
 **States**
 
@@ -117,8 +127,8 @@ The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) a
 |------|---------|-------|-------|
 | List | 4 skeleton rows; `aria-busy` | No notes: "No notes yet" + **Create your first note**. No matches: "No notes match "x"" + **Clear search** | Inline red banner + **Retry** |
 | Detail | Skeleton block | Nothing selected: "Select a note" | 404: "Note not found" (it may have been deleted, for example by an agent) + **Back to notes**. Other errors: banner + **Retry** |
-| Create | Submit button disabled with a spinner | – | Field errors under each input (client-side and from a 422). Other errors: alert at the top of the form; input is kept |
-| Delete | Confirm button shows a spinner | – | Error toast; the note stays |
+| Create | Save button disabled and reads "Saving…". Cancel and Esc are disabled too | – | Field errors under each input (client-side and from a 422). Other errors: alert at the top of the form; input is kept |
+| Delete | None: the note leaves the list at once (optimistic), and if it was open the next note is selected | – | The note comes back (and is re-selected if you haven't moved on), plus an error toast |
 
 Successful create or delete shows a toast (an `aria-live="polite"` region). After a create, the new note is selected. After a delete, the row is removed from the list right away and restored if the request fails. If the deleted note was open, the next note is selected. Search is debounced by 250 ms and the previous results stay on screen while new ones load.
 
@@ -139,11 +149,21 @@ Successful create or delete shows a toast (an `aria-live="polite"` region). Afte
 | `n` | New note |
 | `↑` / `↓` | Move through the list (focus moves between rows) |
 | `Enter` | Open the focused note |
-| `Delete` | Delete the focused list row or the open note (opens the confirm dialog) |
+| `Delete` (or `Backspace`, labelled "delete" on Mac) | Delete the focused list row's note, otherwise the open note (opens the confirm dialog) |
 | `Ctrl/⌘ + Enter` | Submit the create form |
 | `Esc` | Close the dialog, cancel the form, or clear the search |
 
-The confirm dialog traps focus and starts on **Cancel**. Every control has a visible focus ring, and the app respects `prefers-reduced-motion`. A shortcuts hint sits at the bottom of the list pane.
+**Delete confirmation:**
+- **The dialog:** an `alertdialog` on the native `<dialog>`, so the page behind is inert. It starts on **Cancel**, so Enter can't delete by accident.
+- **Wording:** "Delete this note?", naming the note and saying that agents lose it too.
+- **Focus:** Cancel and Esc return focus to whatever opened the dialog. After a delete, focus moves to the newly selected note's row, or to the detail pane on mobile. With no notes left, it moves to **New note**.
+
+**Shortcuts and focus:**
+- **Shortcuts:** page shortcuts are off while any dialog is open.
+- **Focus rings:** every control has a visible focus ring. `<main>` and the detail pane don't, because focus only reaches them through the skip link or opening a note on mobile.
+- **Motion:** the app respects `prefers-reduced-motion`.
+- **Hint:** a shortcuts hint (N, /, ↑↓, Enter, Del) sits at the bottom of the list pane on desktop.
+- **Tap targets:** at 375 px every control is at least 24 px, and nothing scrolls sideways.
 
 ## 8. Web Component: `<tag-input>`
 
@@ -155,6 +175,7 @@ This is a framework-free custom element written in TypeScript with a Shadow DOM.
 | Property | `tags: string[]` (get/set) |
 | Events | `tags-change` → `detail: {tags}`, and `tag-click` → `detail: {tag}` (readonly mode). Both bubble and are composed |
 | Keys | `Enter` or `,` adds a tag. `Backspace` on an empty input removes the last tag. Pasting `a, b, c` adds several. Each chip has a × button labelled "Remove tag x" |
+| Method | `commitPending()` adds any typed but un-added text as tags, and returns `false` if some of it was rejected. Forms call it on submit |
 | Rules | The same normalisation and regex as the backend (`tag-rules.ts`, which the create form will reuse). An invalid tag, a duplicate or one over the limit is not added. It stays in the input, which gets a red border and `aria-invalid`, with an explanation linked by `aria-describedby` |
 | Readonly | No input and no remove buttons. Chips become buttons that fire `tag-click`. The note detail uses this mode, and clicking a tag searches for it |
 | Styling | CSS custom properties `--tag-bg`, `--tag-fg`, `--tag-focus`, plus `::part(label)`, `::part(field)`, `::part(chip)` and `::part(input)`. The defaults read the app's `--color-*` tokens. CSS variables pass into the shadow DOM, and `@theme static` makes Tailwind emit every token |
@@ -195,9 +216,9 @@ api/
   go.mod  .env.example
 web/
   src/config/env.ts               the only reader of import.meta.env (typed, validated)
-  src/lib/                        queryClient.ts  format.ts (relative and full dates)
+  src/lib/                        queryClient.ts  format.ts (relative and full dates)  validateNote.ts (same rules as the API)
   src/api/                        client.ts  notes.ts (query hooks)  types.ts
-  src/components/                 NoteList  NoteDetail  CreateNoteForm  SearchBar  ConfirmDialog  EmptyState  ErrorState  Skeleton  TagChips  buttonStyles.ts
+  src/components/                 NoteList  NoteDetail  CreateNoteForm (CreateNoteDialog)  Dialog (native <dialog>)  SearchBar  ConfirmDialog  EmptyState  ErrorState  Skeleton  TagChips  icons  buttonStyles.ts
   src/components/toast/           ToastProvider.tsx  toast-context.ts (useToast)
   src/web-components/tag-input/   tag-input.ts  tag-rules.ts  TagInput.tsx  tag-input-jsx.d.ts  *.test.ts(x)
   src/hooks/                      useShortcuts  useNoteParam (?note=)  useDebouncedValue  useMediaQuery

@@ -17,18 +17,23 @@ function renderApp(url = '/') {
 const noteParam = () => new URLSearchParams(window.location.search).get('note')
 const list = () => screen.getByRole('list', { name: 'Notes' })
 const detail = () => screen.getByRole('region', { name: 'Note details' })
+/** Note titles in list order. (Each row also has a delete button, so counting buttons won't do.) */
+const rowTitles = () =>
+  within(list())
+    .getAllByRole('listitem')
+    .map((item) => item.querySelector('[data-note-id] [id$="-title"]')?.textContent)
 
 beforeEach(() => {
   window.history.replaceState(null, '', '/')
 })
 
 describe('App shell', () => {
-  it('shows the app name, a skip link and a disabled New note button', () => {
+  it('shows the app name, a skip link and a New note button', () => {
     renderApp()
 
     expect(screen.getByRole('heading', { level: 1, name: 'Team Notes' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Skip to content' })).toHaveAttribute('href', '#main')
-    expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled()
   })
 })
 
@@ -38,12 +43,8 @@ describe('note list', () => {
 
     expect(screen.getByText('Loading notes…')).toBeInTheDocument()
 
-    const rows = await within(await screen.findByRole('list', { name: 'Notes' })).findAllByRole('button')
-    expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining('Sprint planning'),
-      expect.stringContaining('API conventions'),
-      expect.stringContaining('Retro notes'),
-    ])
+    await screen.findByRole('list', { name: 'Notes' })
+    expect(rowTitles()).toEqual(['Sprint planning', 'API conventions', 'Retro notes'])
     expect(screen.queryByText('Loading notes…')).not.toBeInTheDocument()
   })
 
@@ -80,7 +81,7 @@ describe('search', () => {
     const searchBox = screen.getByRole('searchbox', { name: 'Search notes' })
 
     await user.type(searchBox, 'retro')
-    await waitFor(() => expect(within(list()).getAllByRole('button')).toHaveLength(1))
+    await waitFor(() => expect(rowTitles()).toHaveLength(1))
     expect(within(list()).getByRole('button', { name: 'Retro notes' })).toBeInTheDocument()
 
     await user.clear(searchBox)
@@ -89,7 +90,7 @@ describe('search', () => {
 
     await user.keyboard('{Escape}')
     expect(searchBox).toHaveValue('')
-    await waitFor(() => expect(within(list()).getAllByRole('button')).toHaveLength(3))
+    await waitFor(() => expect(rowTitles()).toHaveLength(3))
   })
 
   it('clears from the "no results" state with Clear search', async () => {
@@ -161,7 +162,7 @@ describe('selecting a note', () => {
     await user.click(tags.getByRole('button', { name: 'go' }))
 
     expect(screen.getByRole('searchbox', { name: 'Search notes' })).toHaveValue('go')
-    await waitFor(() => expect(within(list()).getAllByRole('button')).toHaveLength(2))
+    await waitFor(() => expect(rowTitles()).toHaveLength(2))
   })
 
   it('opens the note from the URL on load', async () => {

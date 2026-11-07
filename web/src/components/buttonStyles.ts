@@ -7,5 +7,6 @@ export const buttonStyles = {
   primary: `${base} bg-purple-600 px-3 py-2 text-white hover:bg-purple-700 disabled:hover:bg-purple-600`,
   secondary: `${base} border border-border bg-bg px-3 py-1.5 text-ink hover:bg-purple-50`,
   danger: `${base} border border-red-600 bg-bg px-3 py-1.5 text-red-700 hover:bg-red-50`,
+  dangerSolid: `${base} bg-red-600 px-3 py-2 text-white hover:bg-red-700`,
   ghost: `${base} px-2 py-1.5 text-purple-700 hover:bg-purple-50`,
 } as const

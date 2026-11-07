@@ -72,7 +72,7 @@ export function useCreateNote() {
     mutationFn: notesApi.create,
     onSuccess: async (note) => {
       queryClient.setQueryData(noteKeys.detail(note.id), note)
-      toast.success('Note created.')
+      toast.success('Note created')
       await queryClient.invalidateQueries({ queryKey: noteKeys.lists() })
     },
   })
@@ -104,7 +104,7 @@ export function useDeleteNote() {
     },
     onSuccess: (_data, id) => {
       queryClient.removeQueries({ queryKey: noteKeys.detail(id) })
-      toast.success('Note deleted.')
+      toast.success('Note deleted')
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: noteKeys.lists() }),
   })

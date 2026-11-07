@@ -1,9 +1,11 @@
 import { useNote } from '../api/notes'
+import type { Note } from '../api/types'
 import { formatFullDate } from '../lib/format'
+import { TagInput } from '../web-components/tag-input/TagInput'
 import { buttonStyles } from './buttonStyles'
 import { EmptyState } from './EmptyState'
 import { ErrorState } from './ErrorState'
-import { TagInput } from '../web-components/tag-input/TagInput'
+import { TrashIcon } from './icons'
 import { Skeleton } from './Skeleton'
 
 interface NoteDetailProps {
@@ -11,13 +13,14 @@ interface NoteDetailProps {
   onClose: () => void
   /** Called when a tag is clicked, to search for it. */
   onTagClick: (tag: string) => void
+  onDelete: (note: Note) => void
 }
 
-export function NoteDetail({ noteId, onClose, onTagClick }: Readonly<NoteDetailProps>) {
+export function NoteDetail({ noteId, onClose, onTagClick, onDelete }: Readonly<NoteDetailProps>) {
   const { data: note, isError, error, refetch, isFetching } = useNote(noteId ?? undefined)
 
   if (!noteId) {
-    return <EmptyState title="Select a note" description="Choose a note from the list to read it here." />
+    return <EmptyState title="Select a note" description="Choose a note from the list, or press N to create one." />
   }
 
   // Not found wins over cached data: the note may have just been deleted by an agent.
@@ -38,10 +41,23 @@ export function NoteDetail({ noteId, onClose, onTagClick }: Readonly<NoteDetailP
   if (note) {
     return (
       <article className="mx-auto max-w-3xl px-4 py-6 md:px-8">
-        <h2 className="text-2xl font-semibold tracking-tight break-words text-ink">{note.title}</h2>
-        <p className="mt-1 text-sm text-ink-muted">
-          Created <time dateTime={note.createdAt}>{formatFullDate(note.createdAt)}</time>
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h2 className="text-2xl font-semibold tracking-tight break-words text-ink">{note.title}</h2>
+            <p className="mt-1 text-sm text-ink-muted">
+              Created <time dateTime={note.createdAt}>{formatFullDate(note.createdAt)}</time>
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => onDelete(note)}
+            aria-keyshortcuts="Delete"
+            className={`${buttonStyles.danger} shrink-0`}
+          >
+            <TrashIcon />
+            Delete
+          </button>
+        </div>
         {note.tags.length > 0 && (
           <TagInput label="Tags" tags={note.tags} readOnly onTagClick={onTagClick} className="mt-4" />
         )}

@@ -93,6 +93,7 @@ const styles = /* css */ `
     line-height: 1rem;
   }
   button.chip {
+    min-height: 1.5rem; /* 24px tap target */
     padding-right: 0.5rem;
     cursor: pointer;
   }
@@ -238,6 +239,17 @@ export class TagInputElement extends HTMLElement {
     return Number.isInteger(n) && n > 0 ? n : MAX_TAGS
   }
 
+  /**
+   * Adds any text still in the input as tags, e.g. when a form is submitted
+   * before Enter was pressed. Returns false if some of it was rejected; that
+   * text stays in the input with an explanation.
+   */
+  commitPending(): boolean {
+    if (this.#input.value.trim() === '') return true
+    this.#commit(this.#input.value)
+    return this.#input.value === ''
+  }
+
   get #readOnly(): boolean {
     return this.hasAttribute('readonly')
   }
@@ -246,7 +258,7 @@ export class TagInputElement extends HTMLElement {
     return this.hasAttribute('disabled')
   }
 
-  #onKeyDown = (event: KeyboardEvent): void => {
+  readonly #onKeyDown = (event: KeyboardEvent): void => {
     if (event.isComposing) return
     if (event.key === 'Enter') {
       event.preventDefault()
@@ -260,14 +272,14 @@ export class TagInputElement extends HTMLElement {
 
   // Commas are handled here rather than on keydown, so pasting "a, b, c"
   // and mobile keyboards (which often don't report the key) both work.
-  #onInput = (): void => {
+  readonly #onInput = (): void => {
     this.#setError('')
     if (this.#input.value.includes(',')) {
       this.#commit(this.#input.value)
     }
   }
 
-  #onChipClick = (event: MouseEvent): void => {
+  readonly #onChipClick = (event: MouseEvent): void => {
     if (!(event.target instanceof Element)) return
     const button = event.target.closest('button')
     const tag = button?.closest('li')?.dataset.tag
@@ -425,4 +437,11 @@ declare global {
 
 if (!customElements.get('tag-input')) {
   customElements.define('tag-input', TagInputElement)
+}
+
+// Dev only: a custom element can't be redefined, so a hot update would leave
+// the old class registered (e.g. new methods missing on the page's elements).
+// Reload the page instead whenever this module or its imports change.
+if (import.meta.hot) {
+  import.meta.hot.accept(() => window.location.reload())
 }

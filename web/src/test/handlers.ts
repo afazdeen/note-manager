@@ -18,10 +18,13 @@ export const seedNotes: readonly Note[] = [
 
 /** A tiny in-memory copy of the API, reset after every test. */
 let notes: Note[] = []
+/** Counter for new ids (new-1, new-2, …), reset with the notes so ids are predictable per test. */
+let created = 0
 
 export const db = {
   reset(): void {
     notes = seedNotes.map((n) => ({ ...n, tags: [...n.tags] }))
+    created = 0
   },
   ids(): string[] {
     return notes.map((n) => n.id)
@@ -39,8 +42,6 @@ export const db = {
   },
 }
 db.reset()
-
-let created = 0
 
 export const handlers = [
   http.get(apiUrl('/health'), () => HttpResponse.json({ status: 'ok' })),

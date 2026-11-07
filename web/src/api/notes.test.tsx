@@ -99,7 +99,7 @@ describe('useCreateNote', () => {
     act(() => result.current.create.mutate({ title: 'New idea', tags: ['ideas'] }))
 
     await waitFor(() => expect(ids(result.current.list.data)).toEqual(['new-1', 'n1', 'n2', 'n3']))
-    expect(screen.getByRole('status')).toHaveTextContent('Note created.')
+    expect(screen.getByRole('status')).toHaveTextContent('Note created')
   })
 
   it('rejects with field errors when validation fails', async () => {
@@ -127,7 +127,7 @@ describe('useDeleteNote', () => {
 
     await waitFor(() => expect(ids(result.current.list.data)).toEqual(['n1', 'n3']))
     await waitFor(() => expect(result.current.remove.isSuccess).toBe(true))
-    expect(screen.getByRole('status')).toHaveTextContent('Note deleted.')
+    expect(screen.getByRole('status')).toHaveTextContent('Note deleted')
     expect(db.ids()).toEqual(['n1', 'n3'])
   })
 

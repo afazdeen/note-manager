@@ -1,11 +1,12 @@
 import type { UseQueryResult } from '@tanstack/react-query'
-import { useId, useRef, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent } from 'react'
 import type { ApiError } from '../api/client'
 import type { Note } from '../api/types'
 import { formatRelativeDate } from '../lib/format'
 import { buttonStyles } from './buttonStyles'
 import { EmptyState } from './EmptyState'
 import { ErrorState } from './ErrorState'
+import { TrashIcon } from './icons'
 import { Skeleton } from './Skeleton'
 import { TagChips } from './TagChips'
 
@@ -15,10 +16,20 @@ interface NoteListProps {
   search: string
   selectedId: string | null
   onSelect: (id: string) => void
+  onDelete: (note: Note) => void
   onClearSearch: () => void
+  onCreateNote: () => void
 }
 
-export function NoteList({ query, search, selectedId, onSelect, onClearSearch }: Readonly<NoteListProps>) {
+export function NoteList({
+  query,
+  search,
+  selectedId,
+  onSelect,
+  onDelete,
+  onClearSearch,
+  onCreateNote,
+}: Readonly<NoteListProps>) {
   const { data: notes, isPending, isError, error, refetch, isFetching, isPlaceholderData } = query
 
   if (isPending) {
@@ -47,10 +58,24 @@ export function NoteList({ query, search, selectedId, onSelect, onClearSearch }:
             }
           />
         ) : (
-          <EmptyState title="No notes yet" description="Notes you and your agents create will show up here." />
+          <EmptyState
+            title="No notes yet"
+            description="Notes you and your agents create will show up here."
+            action={
+              <button type="button" onClick={onCreateNote} className={buttonStyles.primary}>
+                Create your first note
+              </button>
+            }
+          />
         ))}
       {notes && notes.length > 0 && (
-        <NoteRows notes={notes} selectedId={selectedId} onSelect={onSelect} stale={isPlaceholderData} />
+        <NoteRows
+          notes={notes}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onDelete={onDelete}
+          stale={isPlaceholderData}
+        />
       )}
       {notes && (
         <p aria-live="polite" className="sr-only">
@@ -65,15 +90,19 @@ interface NoteRowsProps {
   notes: Note[]
   selectedId: string | null
   onSelect: (id: string) => void
+  onDelete: (note: Note) => void
   /** True while showing old results during a new search. */
   stale: boolean
 }
 
-function NoteRows({ notes, selectedId, onSelect, stale }: Readonly<NoteRowsProps>) {
+function NoteRows({ notes, selectedId, onSelect, onDelete, stale }: Readonly<NoteRowsProps>) {
   const listRef = useRef<HTMLUListElement>(null)
   const idPrefix = useId()
-  // One tab stop for the whole list (the selected note, or the first); arrows move within it.
-  const tabStopId = notes.some((n) => n.id === selectedId) ? selectedId : notes[0]?.id
+  // The row that last had focus. With the selected note and the first row as
+  // fallbacks, it is the list's single Tab stop (plus that row's delete button).
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const has = (id: string | null): id is string => id !== null && notes.some((n) => n.id === id)
+  const tabStopId = (has(activeId) && activeId) || (has(selectedId) && selectedId) || notes[0]?.id
 
   const onRowKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const rows = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('button[data-note-id]') ?? [])
@@ -102,20 +131,23 @@ function NoteRows({ notes, selectedId, onSelect, stale }: Readonly<NoteRowsProps
     >
       {notes.map((note) => {
         const selected = note.id === selectedId
+        const tabbable = note.id === tabStopId
         const titleId = `${idPrefix}-${note.id}-title`
         const metaId = `${idPrefix}-${note.id}-meta`
         return (
-          <li key={note.id}>
+          <li key={note.id} className="group relative">
             <button
               type="button"
               data-note-id={note.id}
-              tabIndex={note.id === tabStopId ? 0 : -1}
+              tabIndex={tabbable ? 0 : -1}
               aria-current={selected ? 'true' : undefined}
               aria-labelledby={titleId}
               aria-describedby={metaId}
+              aria-keyshortcuts="Delete"
               onClick={() => onSelect(note.id)}
+              onFocus={() => setActiveId(note.id)}
               onKeyDown={onRowKeyDown}
-              className={`block w-full border-l-4 px-4 py-3 text-left hover:bg-purple-50 focus-visible:-outline-offset-2 ${
+              className={`block w-full border-l-4 py-3 pr-4 pl-4 text-left hover:bg-purple-50 focus-visible:-outline-offset-2 ${
                 selected ? 'border-purple-500 bg-purple-50' : 'border-transparent'
               }`}
             >
@@ -127,10 +159,21 @@ function NoteRows({ notes, selectedId, onSelect, stale }: Readonly<NoteRowsProps
                   {formatRelativeDate(note.createdAt)}
                 </time>
               </span>
-              {note.body && <span className="mt-1 line-clamp-2 text-sm text-ink-muted">{note.body}</span>}
-              <span id={metaId}>
+              {note.body && <span className="mt-1 line-clamp-2 pr-8 text-sm text-ink-muted">{note.body}</span>}
+              <span id={metaId} className="block min-h-6 pr-10">
                 <TagChips tags={note.tags} className="mt-2" />
               </span>
+            </button>
+            {/* A sibling, not a child: buttons can't contain buttons. */}
+            <button
+              type="button"
+              tabIndex={tabbable ? 0 : -1}
+              aria-label={`Delete note ${note.title}`}
+              onClick={() => onDelete(note)}
+              onFocus={() => setActiveId(note.id)}
+              className="absolute right-2 bottom-2 grid size-8 place-items-center rounded-md text-ink-muted hover:bg-red-50 hover:text-red-600 focus-visible:bg-red-50 focus-visible:text-red-600"
+            >
+              <TrashIcon />
             </button>
           </li>
         )

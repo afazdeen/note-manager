@@ -173,6 +173,29 @@ describe('<tag-input>', () => {
     expect(shadow.getByRole('button', { name: 'Remove tag go' })).toBeDisabled()
   })
 
+  it('commitPending() adds typed text, and reports false when it is rejected', async () => {
+    const { el, user, input, chipTexts, changes } = mount()
+
+    await user.type(input(), 'docs')
+    expect(el.commitPending()).toBe(true)
+    expect(chipTexts()).toEqual(['docs'])
+    expect(changes).toEqual([['docs']])
+
+    // Set the text directly: after the component clears its input, user-event
+    // (which can't see focus inside shadow DOM) would keep typing after "docs".
+    fireEvent.input(input(), { target: { value: '-bad' } })
+    expect(el.commitPending()).toBe(false)
+    expect(input()).toHaveValue('-bad')
+    expect(chipTexts()).toEqual(['docs'])
+  })
+
+  it('commitPending() is a no-op when nothing is typed', () => {
+    const { el, changes } = mount()
+
+    expect(el.commitPending()).toBe(true)
+    expect(changes).toEqual([])
+  })
+
   it('renders the label as text, never as HTML', () => {
     const { el, shadow } = mount({ label: '<img src=x onerror=alert(1)>' })
 
