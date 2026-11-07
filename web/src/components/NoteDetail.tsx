@@ -3,15 +3,17 @@ import { formatFullDate } from '../lib/format'
 import { buttonStyles } from './buttonStyles'
 import { EmptyState } from './EmptyState'
 import { ErrorState } from './ErrorState'
+import { TagInput } from '../web-components/tag-input/TagInput'
 import { Skeleton } from './Skeleton'
-import { TagChips } from './TagChips'
 
 interface NoteDetailProps {
   noteId: string | null
   onClose: () => void
+  /** Called when a tag is clicked, to search for it. */
+  onTagClick: (tag: string) => void
 }
 
-export function NoteDetail({ noteId, onClose }: Readonly<NoteDetailProps>) {
+export function NoteDetail({ noteId, onClose, onTagClick }: Readonly<NoteDetailProps>) {
   const { data: note, isError, error, refetch, isFetching } = useNote(noteId ?? undefined)
 
   if (!noteId) {
@@ -40,7 +42,9 @@ export function NoteDetail({ noteId, onClose }: Readonly<NoteDetailProps>) {
         <p className="mt-1 text-sm text-ink-muted">
           Created <time dateTime={note.createdAt}>{formatFullDate(note.createdAt)}</time>
         </p>
-        <TagChips tags={note.tags} className="mt-3" />
+        {note.tags.length > 0 && (
+          <TagInput label="Tags" tags={note.tags} readOnly onTagClick={onTagClick} className="mt-4" />
+        )}
         {note.body ? (
           <p className="mt-6 leading-relaxed break-words whitespace-pre-wrap text-ink">{note.body}</p>
         ) : (

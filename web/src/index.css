@@ -3,8 +3,10 @@
 /*
  * Design tokens from Implementation_Guide.md section 9.
  * Tailwind's default palette is removed, so only these colours exist.
+ * `static` emits every token as a CSS variable, even ones no utility uses,
+ * so web components can read them inside their shadow DOM.
  */
-@theme {
+@theme static {
   --color-*: initial;
 
   --color-bg: #ffffff;

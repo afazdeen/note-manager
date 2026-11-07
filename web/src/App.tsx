@@ -36,6 +36,12 @@ export function App() {
     if (!isDesktop) requestAnimationFrame(() => detailRef.current?.focus())
   }
 
+  // Clicking a tag in a note searches for it. On mobile, go back to the list to show the results.
+  const searchForTag = (tag: string) => {
+    setSearch(tag)
+    if (!isDesktop) setNoteId(null)
+  }
+
   const backToList = () => {
     const previous = noteId
     setNoteId(null)
@@ -109,7 +115,7 @@ export function App() {
               </button>
             </div>
           )}
-          <NoteDetail noteId={noteId} onClose={backToList} />
+          <NoteDetail noteId={noteId} onClose={backToList} onTagClick={searchForTag} />
         </section>
       </main>
     </div>

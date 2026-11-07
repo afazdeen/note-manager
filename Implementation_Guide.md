@@ -147,7 +147,7 @@ The confirm dialog traps focus and starts on **Cancel**. Every control has a vis
 
 ## 8. Web Component: `<tag-input>`
 
-This is a framework-free custom element written in TypeScript with a Shadow DOM. It is registered once in `main.tsx`.
+This is a framework-free custom element written in TypeScript with a Shadow DOM. Importing `tag-input.ts` registers it, guarded so it only registers once. The React wrapper imports it.
 
 | API | Details |
 |-----|---------|
@@ -155,10 +155,12 @@ This is a framework-free custom element written in TypeScript with a Shadow DOM.
 | Property | `tags: string[]` (get/set) |
 | Events | `tags-change` → `detail: {tags}`, and `tag-click` → `detail: {tag}` (readonly mode). Both bubble and are composed |
 | Keys | `Enter` or `,` adds a tag. `Backspace` on an empty input removes the last tag. Pasting `a, b, c` adds several. Each chip has a × button labelled "Remove tag x" |
-| Rules | The same normalisation and regex as the backend. An invalid tag shows an inline hint (`aria-describedby`) and is not added |
-| Styling | CSS custom properties `--tag-bg`, `--tag-fg`, `--tag-focus`, plus `::part(chip)` and `::part(input)` |
+| Rules | The same normalisation and regex as the backend (`tag-rules.ts`, which the create form will reuse). An invalid tag, a duplicate or one over the limit is not added. It stays in the input, which gets a red border and `aria-invalid`, with an explanation linked by `aria-describedby` |
+| Readonly | No input and no remove buttons. Chips become buttons that fire `tag-click`. The note detail uses this mode, and clicking a tag searches for it |
+| Styling | CSS custom properties `--tag-bg`, `--tag-fg`, `--tag-focus`, plus `::part(label)`, `::part(field)`, `::part(chip)` and `::part(input)`. The defaults read the app's `--color-*` tokens. CSS variables pass into the shadow DOM, and `@theme static` makes Tailwind emit every token |
+| Safety | User text is always set with `textContent`, never `innerHTML` |
 
-A small `TagInput.tsx` wrapper connects props and events with a `ref`, and a JSX type declaration makes `<tag-input>` type-safe.
+A small `TagInput.tsx` wrapper sets the `tags` property and listens for events with a `ref`. A JSX type declaration (`tag-input-jsx.d.ts`) makes `<tag-input>` type-safe. Global shortcuts use `event.composedPath()`, so typing inside the shadow input doesn't trigger them.
 
 ## 9. Design tokens
 
@@ -197,7 +199,7 @@ web/
   src/api/                        client.ts  notes.ts (query hooks)  types.ts
   src/components/                 NoteList  NoteDetail  CreateNoteForm  SearchBar  ConfirmDialog  EmptyState  ErrorState  Skeleton  TagChips  buttonStyles.ts
   src/components/toast/           ToastProvider.tsx  toast-context.ts (useToast)
-  src/web-components/tag-input/   tag-input.ts  TagInput.tsx  tag-input.test.ts
+  src/web-components/tag-input/   tag-input.ts  tag-rules.ts  TagInput.tsx  tag-input-jsx.d.ts  *.test.ts(x)
   src/hooks/                      useShortcuts  useNoteParam (?note=)  useDebouncedValue  useMediaQuery
   src/test/                       MSW handlers + in-memory db, server, setup, render helpers
   App.tsx  main.tsx  index.css

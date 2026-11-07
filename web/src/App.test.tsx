@@ -149,6 +149,21 @@ describe('selecting a note', () => {
     expect(within(detail()).getByRole('heading', { level: 2, name: 'API conventions' })).toBeInTheDocument()
   })
 
+  it('shows the note tags read-only, and clicking one searches for it', async () => {
+    const { user } = renderApp('/?note=n2')
+    await within(detail()).findByRole('heading', { level: 2, name: 'API conventions' })
+
+    const tagInput = detail().querySelector('tag-input')
+    if (!tagInput?.shadowRoot) throw new Error('no <tag-input> in the note')
+    const tags = within(tagInput.shadowRoot as unknown as HTMLElement)
+    expect(tags.queryByRole('textbox')).not.toBeInTheDocument()
+
+    await user.click(tags.getByRole('button', { name: 'go' }))
+
+    expect(screen.getByRole('searchbox', { name: 'Search notes' })).toHaveValue('go')
+    await waitFor(() => expect(within(list()).getAllByRole('button')).toHaveLength(2))
+  })
+
   it('opens the note from the URL on load', async () => {
     renderApp('/?note=n3')
 

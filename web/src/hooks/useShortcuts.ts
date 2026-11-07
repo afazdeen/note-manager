@@ -2,8 +2,13 @@ import { useEffect, useRef } from 'react'
 
 export type Shortcuts = Partial<Record<string, (event: KeyboardEvent) => void>>
 
-/** True when the key press is meant for a text field, so single-key shortcuts must not fire. */
-function isTyping(target: EventTarget | null): boolean {
+/**
+ * True when the key press is meant for a text field, so single-key shortcuts
+ * must not fire. Uses composedPath() to see the real target inside shadow DOM
+ * (e.g. the input inside <tag-input>), not just the host element.
+ */
+function isTyping(event: KeyboardEvent): boolean {
+  const target = event.composedPath()[0] ?? event.target
   if (!(target instanceof HTMLElement)) return false
   return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
 }
@@ -20,7 +25,7 @@ export function useShortcuts(shortcuts: Shortcuts): void {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || isTyping(event.target)) {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || isTyping(event)) {
         return
       }
       const handler = latest.current[event.key]
