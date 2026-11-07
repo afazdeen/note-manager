@@ -14,6 +14,7 @@ interface CreateNoteDialogProps {
 }
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent)
+// Inputs use ink-muted borders: the lighter border token is under the 3:1 a control's edge needs.
 const fieldClass =
   'mt-1.5 block w-full rounded-md border bg-bg px-3 py-2 text-sm text-ink placeholder:text-ink-muted hover:border-purple-500 focus:border-purple-500'
 
@@ -35,7 +36,6 @@ export function CreateNoteDialog({ onCancel, onCreated, returnFocusRef }: Readon
     titleError: `${id}-title-error`,
     body: `${id}-body`,
     bodyError: `${id}-body-error`,
-    tagsError: `${id}-tags-error`,
   }
 
   const tagInput = () => formRef.current?.querySelector('tag-input') ?? null
@@ -157,7 +157,7 @@ export function CreateNoteDialog({ onCancel, onCreated, returnFocusRef }: Readon
             autoComplete="off"
             aria-invalid={errors.title ? true : undefined}
             aria-describedby={errors.title ? ids.titleError : undefined}
-            className={`${fieldClass} ${errors.title ? 'border-red-600' : 'border-border'}`}
+            className={`${fieldClass} ${errors.title ? 'border-red-600' : 'border-ink-muted'}`}
           />
           <FieldError id={ids.titleError} message={errors.title} />
         </div>
@@ -177,7 +177,7 @@ export function CreateNoteDialog({ onCancel, onCreated, returnFocusRef }: Readon
             }}
             aria-invalid={errors.body ? true : undefined}
             aria-describedby={errors.body ? ids.bodyError : undefined}
-            className={`${fieldClass} resize-y ${errors.body ? 'border-red-600' : 'border-border'}`}
+            className={`${fieldClass} resize-y ${errors.body ? 'border-red-600' : 'border-ink-muted'}`}
           />
           <FieldError id={ids.bodyError} message={errors.body} />
         </div>
@@ -191,8 +191,8 @@ export function CreateNoteDialog({ onCancel, onCreated, returnFocusRef }: Readon
               setErrors((current) => (current.tags ? { ...current, tags: undefined } : current))
             }}
             disabled={saving}
+            error={errors.tags}
           />
-          <FieldError id={ids.tagsError} message={errors.tags} />
         </div>
 
         <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">

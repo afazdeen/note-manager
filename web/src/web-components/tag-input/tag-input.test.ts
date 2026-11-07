@@ -105,6 +105,29 @@ describe('<tag-input>', () => {
     expect(input()).toHaveAccessibleDescription(expect.stringContaining(message))
   })
 
+  it('shows an error from the error attribute, linked to the input, until it is removed', () => {
+    const { el, input, error } = mount({ error: 'Use at most 10 tags.' })
+
+    expect(error()).toBe('Use at most 10 tags.')
+    expect(input()).toHaveAttribute('aria-invalid', 'true')
+    expect(input()).toHaveAccessibleDescription(expect.stringContaining('Use at most 10 tags.'))
+
+    el.removeAttribute('error')
+
+    expect(error()).toBe('')
+    expect(input()).not.toHaveAttribute('aria-invalid')
+  })
+
+  it('shows its own message first, then the one from the error attribute', async () => {
+    const { el, user, input, error } = mount()
+    await user.type(input(), '-x{Enter}')
+    const own = error()
+
+    el.setAttribute('error', 'Fix the tag you are typing.')
+
+    expect(error()).toBe(`${own} Fix the tag you are typing.`)
+  })
+
   it('clears the explanation once you type again', async () => {
     const { user, input, error } = mount()
     await user.type(input(), '-x{Enter}')

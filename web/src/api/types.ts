@@ -20,25 +20,23 @@ export interface NotesResponse {
 }
 
 /** Codes the API sends in error.code. */
-export type ServerErrorCode =
-  | 'bad_request'
-  | 'not_found'
-  | 'method_not_allowed'
-  | 'payload_too_large'
-  | 'unsupported_media_type'
-  | 'validation_failed'
-  | 'internal'
+export const SERVER_ERROR_CODES = [
+  'bad_request',
+  'not_found',
+  'method_not_allowed',
+  'payload_too_large',
+  'unsupported_media_type',
+  'validation_failed',
+  'internal',
+] as const
 
-/** Codes the client adds when there is no usable API response. */
+export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number]
+
+/**
+ * Codes the client adds when there is no usable API response: the server
+ * can't be reached, or it answers with something that isn't the expected
+ * shape (including an error code this app doesn't know).
+ */
 export type ClientErrorCode = 'network_error' | 'invalid_response'
 
 export type ApiErrorCode = ServerErrorCode | ClientErrorCode
-
-/** The single error shape every API error uses. */
-export interface ApiErrorBody {
-  error: {
-    code: ServerErrorCode
-    message: string
-    fields?: Record<string, string>
-  }
-}

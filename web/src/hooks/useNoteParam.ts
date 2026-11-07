@@ -19,10 +19,20 @@ function getNoteId(): string | null {
   return new URLSearchParams(window.location.search).get(PARAM) || null
 }
 
-export function useNoteParam(): [noteId: string | null, setNoteId: (id: string | null) => void] {
+export interface SetNoteOptions {
+  /**
+   * Replace the current history entry instead of adding one. Use it when the
+   * current note can't be returned to, e.g. it was just deleted.
+   */
+  replace?: boolean
+}
+
+export type SetNoteId = (id: string | null, options?: SetNoteOptions) => void
+
+export function useNoteParam(): [noteId: string | null, setNoteId: SetNoteId] {
   const noteId = useSyncExternalStore(subscribe, getNoteId)
 
-  const setNoteId = useCallback((id: string | null) => {
+  const setNoteId = useCallback<SetNoteId>((id, options = {}) => {
     if (id === getNoteId()) return
     const url = new URL(window.location.href)
     if (id) {
@@ -30,7 +40,11 @@ export function useNoteParam(): [noteId: string | null, setNoteId: (id: string |
     } else {
       url.searchParams.delete(PARAM)
     }
-    window.history.pushState(null, '', url)
+    if (options.replace) {
+      window.history.replaceState(null, '', url)
+    } else {
+      window.history.pushState(null, '', url)
+    }
     for (const listener of listeners) listener()
   }, [])
 

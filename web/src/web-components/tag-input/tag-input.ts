@@ -3,7 +3,8 @@ import { MAX_TAGS, cleanTags, normalizeTag, tagError } from './tag-rules'
 /**
  * <tag-input>: a framework-free tag picker (Implementation_Guide.md section 8).
  *
- * Attributes: label, value (comma-separated), placeholder, max-tags, readonly, disabled.
+ * Attributes: label, value (comma-separated), placeholder, max-tags, readonly, disabled,
+ *             error (a message from the form, shown and announced like the element's own).
  * Property:   tags (string[]).
  * Events:     tags-change { tags } after the user changes the tags;
  *             tag-click { tag } when a chip is clicked in readonly mode.
@@ -47,7 +48,7 @@ const styles = /* css */ `
     gap: 0.375rem;
     min-height: 2.5rem;
     padding: 0.375rem 0.5rem;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-ink-muted); /* 3:1 or more against the page, like other inputs */
     border-radius: 0.375rem;
     background: var(--color-bg);
     cursor: text;
@@ -179,9 +180,11 @@ function required<T extends Element>(root: ShadowRoot, selector: string): T {
 }
 
 export class TagInputElement extends HTMLElement {
-  static readonly observedAttributes = ['label', 'value', 'placeholder', 'max-tags', 'readonly', 'disabled']
+  static readonly observedAttributes = ['label', 'value', 'placeholder', 'max-tags', 'readonly', 'disabled', 'error']
 
   #tags: string[] = []
+  /** The element's own message (e.g. an invalid tag). Shown before the error attribute's. */
+  #ownError = ''
   readonly #root: ShadowRoot
   readonly #label: HTMLLabelElement
   readonly #field: HTMLDivElement
@@ -344,7 +347,19 @@ export class TagInputElement extends HTMLElement {
   }
 
   #setError(message: string): void {
-    this.#error.textContent = message
+    this.#ownError = message
+    this.#showError()
+  }
+
+  /**
+   * Shows the element's own message and the error attribute (both, when they
+   * differ). They go in #error, which the input's aria-describedby points to
+   * and which is a live region, so screen readers hear them.
+   */
+  #showError(): void {
+    const fromForm = this.getAttribute('error') ?? ''
+    const message = [this.#ownError, fromForm === this.#ownError ? '' : fromForm].filter(Boolean).join(' ')
+    if (this.#error.textContent !== message) this.#error.textContent = message
     this.#field.classList.toggle('invalid', message !== '')
     if (message) {
       this.#input.setAttribute('aria-invalid', 'true')
@@ -366,6 +381,7 @@ export class TagInputElement extends HTMLElement {
     this.#input.hidden = readOnly
     this.#input.disabled = disabled
     this.#empty.hidden = !(readOnly && this.#tags.length === 0)
+    this.#showError()
 
     this.#renderChips(`${readOnly}:${disabled}`)
   }

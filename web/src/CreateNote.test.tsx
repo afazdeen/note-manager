@@ -118,9 +118,28 @@ describe('validation', () => {
     typeTag('Bad Tag!')
     await user.click(saveButton())
 
-    expect(within(dialog()).getByText(/fix or clear the tag you're typing/i)).toBeInTheDocument()
+    // Both messages are linked to the tag input, so screen readers hear them when focus lands there.
     expect(tagField()).toHaveAccessibleDescription(expect.stringContaining(`"bad tag!" isn't a valid tag`))
+    expect(tagField()).toHaveAccessibleDescription(expect.stringMatching(/fix or clear the tag you're typing/i))
+    expect(tagField()).toHaveAttribute('aria-invalid', 'true')
     expect(posted).toEqual([])
+  })
+
+  it('links a tags error from the server to the tag input', async () => {
+    server.use(
+      http.post(apiUrl('/notes'), () =>
+        apiError(422, 'validation_failed', 'Some fields are invalid.', { tags: 'must have at most 10 tags (got 11)' }),
+      ),
+    )
+    const { user } = await renderApp()
+    await user.click(newNoteButton())
+    await user.type(titleField(), 'Tagged')
+    await user.click(saveButton())
+
+    await waitFor(() =>
+      expect(tagField()).toHaveAccessibleDescription(expect.stringContaining('Tags must have at most 10 tags (got 11).')),
+    )
+    expect(tagField()).toHaveAttribute('aria-invalid', 'true')
   })
 })
 

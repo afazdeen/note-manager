@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ToastContext, type ToastApi, type ToastKind } from './toast-context'
 
 /** Errors stay longer so there is time to read them. */
@@ -50,15 +50,33 @@ export function ToastProvider({ children }: Readonly<{ children: ReactNode }>) {
 }
 
 function ToastItem({ toast, onDismiss }: Readonly<{ toast: Toast; onDismiss: (id: number) => void }>) {
+  // The timer pauses while the pointer is over the toast or focus is inside it,
+  // so it can't disappear while someone is reading it or about to dismiss it.
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const paused = hovered || focused
+  const remainingMs = useRef(TOAST_DURATION_MS[toast.kind])
+
   useEffect(() => {
-    const timer = window.setTimeout(() => onDismiss(toast.id), TOAST_DURATION_MS[toast.kind])
-    return () => window.clearTimeout(timer)
-  }, [toast.id, toast.kind, onDismiss])
+    if (paused) return
+    const started = Date.now()
+    const timer = window.setTimeout(() => onDismiss(toast.id), remainingMs.current)
+    return () => {
+      window.clearTimeout(timer)
+      remainingMs.current -= Date.now() - started
+    }
+  }, [paused, toast.id, onDismiss])
 
   const isError = toast.kind === 'error'
 
   return (
     <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false)
+      }}
       role={isError ? 'alert' : 'status'}
       className={`pointer-events-auto flex items-start gap-3 rounded-lg border p-3 text-sm text-ink ${
         isError ? 'border-red-600 bg-red-50' : 'border-green-700 bg-green-50'

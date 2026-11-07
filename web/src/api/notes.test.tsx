@@ -2,10 +2,10 @@ import { act, renderHook, screen, waitFor } from '@testing-library/react'
 import { delay, http } from 'msw'
 import { describe, expect, it } from 'vitest'
 import { apiError, apiUrl, db } from '../test/handlers'
-import { createWrapper } from '../test/render'
+import { createTestQueryClient, createWrapper } from '../test/render'
 import { server } from '../test/server'
 import { ApiError } from './client'
-import { normalizeSearch, useCreateNote, useDeleteNote, useNote, useNotesSearch } from './notes'
+import { noteKeys, normalizeSearch, useCreateNote, useDeleteNote, useNote, useNotesSearch } from './notes'
 import type { Note } from './types'
 
 const ids = (notes: Note[] | undefined): string[] | undefined => notes?.map((n) => n.id)
@@ -162,4 +162,92 @@ describe('useDeleteNote', () => {
     )
     expect(db.ids()).toEqual(['n1', 'n2', 'n3'])
   })
+
+  it('treats a 404 as deleted: the note was already gone, e.g. deleted by an agent', async () => {
+    server.use(http.delete(apiUrl('/notes/:id'), () => apiError(404, 'not_found', 'Note not found.')))
+    const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
+      wrapper: createWrapper(),
+    })
+    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+
+    act(() => result.current.remove.mutate('n2'))
+
+    await waitFor(() => expect(result.current.remove.isSuccess).toBe(true))
+    expect(screen.getByRole('status')).toHaveTextContent('Note deleted')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('keeps a pending delete hidden when the list refetches before the server has deleted it', async () => {
+    const { release } = holdDelete('n2')
+    const client = createTestQueryClient()
+    const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
+      wrapper: createWrapper(client),
+    })
+    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    act(() => result.current.remove.mutate('n2'))
+    await waitFor(() => expect(ids(result.current.list.data)).toEqual(['n1', 'n3']))
+
+    // A refetch (like the 15 s interval or window focus) still gets n2 from the server.
+    await act(() => result.current.list.refetch())
+    await waitFor(() => expect(result.current.list.isFetching).toBe(false))
+    expect(ids(client.getQueryData<Note[]>(noteKeys.list('')))).toContain('n2')
+    expect(ids(result.current.list.data)).toEqual(['n1', 'n3'])
+
+    release()
+    await waitFor(() => expect(result.current.remove.isSuccess).toBe(true))
+    expect(ids(result.current.list.data)).toEqual(['n1', 'n3'])
+  })
+
+  it('a failed delete brings back only its own note, not one deleted at the same time', async () => {
+    const { release } = holdDelete('n1', () => apiError(500, 'internal', 'Something went wrong. Please try again.'))
+    const seen: (string[] | undefined)[] = []
+    const { result } = renderHook(
+      () => {
+        const value = { list: useNotesSearch(''), first: useDeleteNote(), second: useDeleteNote() }
+        seen.push(ids(value.list.data))
+        return value
+      },
+      { wrapper: createWrapper() },
+    )
+    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+
+    act(() => result.current.first.mutate('n1'))
+    act(() => result.current.second.mutate('n2'))
+    await waitFor(() => expect(result.current.second.isSuccess).toBe(true))
+    await waitFor(() => expect(result.current.list.isFetching).toBe(false))
+    // The second delete's refetch must not bring back n1, whose delete is still running.
+    expect(ids(result.current.list.data)).toEqual(['n3'])
+    const afterSecond = seen.length
+
+    // Slow list responses down like a real network, so a note that briefly
+    // reappeared would be rendered (and caught) before the refetch replaced it.
+    server.use(
+      http.get(apiUrl('/notes'), async () => {
+        await delay(50)
+      }),
+    )
+    release()
+
+    await waitFor(() => expect(result.current.first.isError).toBe(true))
+    await waitFor(() => expect(ids(result.current.list.data)).toEqual(['n1', 'n3']))
+    // n2 never came back, not even for a moment.
+    expect(seen.slice(afterSecond).filter((list) => list?.includes('n2'))).toEqual([])
+    expect(db.ids()).toEqual(['n1', 'n3'])
+  })
 })
+
+/** Holds the DELETE for `id` until release(); then answers with `respond` (default: the normal handler). */
+function holdDelete(id: string, respond: () => Response | undefined = () => undefined) {
+  let release: () => void = () => undefined
+  const released = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  server.use(
+    http.delete(apiUrl('/notes/:id'), async ({ params }) => {
+      if (params.id !== id) return undefined
+      await released
+      return respond()
+    }),
+  )
+  return { release }
+}

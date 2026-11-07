@@ -49,10 +49,10 @@ export function App() {
     return notes[i + 1]?.id ?? notes[i - 1]?.id ?? null
   }
 
-  /** Delete key: the focused list row's note, otherwise the open note. */
+  /** Delete key: the note of the focused list row (its row or delete button), otherwise the open note. */
   const deleteFocusedOrOpenNote = () => {
-    const focused = document.activeElement
-    const id = (focused instanceof HTMLElement ? focused.dataset.noteId : undefined) ?? noteId
+    const row = document.activeElement?.closest<HTMLElement>('[data-note-row]')
+    const id = row?.dataset.noteRow ?? noteId
     const note = id ? findNote(id) : undefined
     if (note) setConfirmingDelete(note)
   }
@@ -82,13 +82,14 @@ export function App() {
 
     const wasOpen = noteId === note.id
     const nextId = neighbourOf(note.id)
-    if (wasOpen) setNoteId(nextId)
+    // Replace, not push: the browser's Back button shouldn't lead to the deleted note.
+    if (wasOpen) setNoteId(nextId, { replace: true })
 
     // The list drops the note at once (optimistic); if the server fails it comes back.
     deleteNote.mutate(note.id, {
       onError: () => {
         // Re-select it too, unless the user has moved on since.
-        if (wasOpen && noteIdRef.current === nextId) setNoteId(note.id)
+        if (wasOpen && noteIdRef.current === nextId) setNoteId(note.id, { replace: true })
       },
     })
 
@@ -114,10 +115,15 @@ export function App() {
     if (!isDesktop) requestAnimationFrame(() => detailRef.current?.focus())
   }
 
-  // Clicking a tag in a note searches for it. On mobile, go back to the list to show the results.
+  // Clicking a tag in a note searches for it. On mobile, go back to the list to
+  // show the results, and move focus to the search box, since the tag that had
+  // focus is hidden with the note.
   const searchForTag = (tag: string) => {
     setSearch(tag)
-    if (!isDesktop) setNoteId(null)
+    if (!isDesktop) {
+      setNoteId(null)
+      requestAnimationFrame(() => searchRef.current?.focus())
+    }
   }
 
   const backToList = () => {

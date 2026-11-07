@@ -52,7 +52,7 @@ export function SearchBar({ value, onChange, inputRef, busy = false, className =
           autoComplete="off"
           spellCheck={false}
           aria-keyshortcuts="/"
-          className="w-full rounded-md border border-border bg-bg py-2 pr-16 pl-9 text-sm text-ink placeholder:text-ink-muted hover:border-purple-500 focus:border-purple-500 [&::-webkit-search-cancel-button]:appearance-none"
+          className="w-full rounded-md border border-ink-muted bg-bg py-2 pr-16 pl-9 text-sm text-ink placeholder:text-ink-muted hover:border-purple-500 focus:border-purple-500 [&::-webkit-search-cancel-button]:appearance-none"
         />
         <div className="absolute inset-y-0 right-2 flex items-center gap-1">
           {busy && (

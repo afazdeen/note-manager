@@ -133,16 +133,18 @@ function NoteRows({ notes, selectedId, onSelect, onDelete, stale }: Readonly<Not
         const selected = note.id === selectedId
         const tabbable = note.id === tabStopId
         const titleId = `${idPrefix}-${note.id}-title`
+        const dateId = `${idPrefix}-${note.id}-date`
         const metaId = `${idPrefix}-${note.id}-meta`
         return (
-          <li key={note.id} className="group relative">
+          // data-note-row lets the Delete key find the note from the row or its delete button.
+          <li key={note.id} data-note-row={note.id} className="group relative">
             <button
               type="button"
               data-note-id={note.id}
               tabIndex={tabbable ? 0 : -1}
               aria-current={selected ? 'true' : undefined}
               aria-labelledby={titleId}
-              aria-describedby={metaId}
+              aria-describedby={`${dateId} ${metaId}`}
               aria-keyshortcuts="Delete"
               onClick={() => onSelect(note.id)}
               onFocus={() => setActiveId(note.id)}
@@ -155,7 +157,7 @@ function NoteRows({ notes, selectedId, onSelect, onDelete, stale }: Readonly<Not
                 <span id={titleId} className="truncate font-medium text-ink">
                   {note.title}
                 </span>
-                <time dateTime={note.createdAt} className="shrink-0 text-xs text-ink-muted">
+                <time id={dateId} dateTime={note.createdAt} className="shrink-0 text-xs text-ink-muted">
                   {formatRelativeDate(note.createdAt)}
                 </time>
               </span>
@@ -169,6 +171,7 @@ function NoteRows({ notes, selectedId, onSelect, onDelete, stale }: Readonly<Not
               type="button"
               tabIndex={tabbable ? 0 : -1}
               aria-label={`Delete note ${note.title}`}
+              aria-keyshortcuts="Delete"
               onClick={() => onDelete(note)}
               onFocus={() => setActiveId(note.id)}
               className="absolute right-2 bottom-2 grid size-8 place-items-center rounded-md text-ink-muted hover:bg-red-50 hover:text-red-600 focus-visible:bg-red-50 focus-visible:text-red-600"

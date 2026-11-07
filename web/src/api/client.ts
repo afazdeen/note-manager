@@ -1,5 +1,5 @@
 import { env } from '../config/env'
-import type { ApiErrorBody, ApiErrorCode, CreateNoteInput, Note, NotesResponse } from './types'
+import { SERVER_ERROR_CODES, type ApiErrorCode, type CreateNoteInput, type Note, type NotesResponse, type ServerErrorCode } from './types'
 
 /** Every failed API call rejects with an ApiError, so callers handle one type. */
 export class ApiError extends Error {
@@ -26,20 +26,52 @@ declare module '@tanstack/react-query' {
 
 const NETWORK_ERROR_MESSAGE = "Can't reach the server. Check your connection and try again."
 
-function isApiErrorBody(value: unknown): value is ApiErrorBody {
-  if (typeof value !== 'object' || value === null || !('error' in value)) return false
-  const { error } = value
+const unexpectedResponse = (status: number): ApiError =>
+  new ApiError(status, 'invalid_response', `The server sent an unexpected response (${status}).`)
+
+// ---- Response checks: the API is another program, so its responses are checked, not cast. ----
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const isString = (value: unknown): value is string => typeof value === 'string'
+
+function isNote(value: unknown): value is Note {
   return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    typeof error.code === 'string' &&
-    'message' in error &&
-    typeof error.message === 'string'
+    isRecord(value) &&
+    isString(value.id) &&
+    isString(value.title) &&
+    isString(value.body) &&
+    isString(value.createdAt) &&
+    Array.isArray(value.tags) &&
+    value.tags.every(isString)
   )
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+function isNotesResponse(value: unknown): value is NotesResponse {
+  return isRecord(value) && Array.isArray(value.notes) && value.notes.every(isNote)
+}
+
+const isServerErrorCode = (code: string): code is ServerErrorCode => SERVER_ERROR_CODES.some((known) => known === code)
+
+/** Turns an error response into an ApiError. Unknown codes become invalid_response, keeping the message. */
+function toApiError(status: number, body: unknown): ApiError {
+  if (!isRecord(body) || !isRecord(body.error)) return unexpectedResponse(status)
+  const { code, message, fields } = body.error
+  if (!isString(code) || !isString(message)) return unexpectedResponse(status)
+
+  const fieldMessages: Record<string, string> = {}
+  if (isRecord(fields)) {
+    for (const [field, text] of Object.entries(fields)) {
+      if (isString(text)) fieldMessages[field] = text
+    }
+  }
+  return new ApiError(status, isServerErrorCode(code) ? code : 'invalid_response', message, fieldMessages)
+}
+
+/** Sends a request and returns the parsed body (undefined for 204). Failures reject with an ApiError. */
+async function send(path: string, init: RequestInit = {}): Promise<{ status: number; body: unknown }> {
   let response: Response
   try {
     response = await fetch(`${env.apiBaseUrl}${path}`, {
@@ -53,25 +85,25 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (response.status === 204) {
-    return undefined as T
+    return { status: 204, body: undefined }
   }
 
   let body: unknown
   try {
     body = await response.json()
   } catch {
-    throw new ApiError(response.status, 'invalid_response', `The server sent an unexpected response (${response.status}).`)
+    throw unexpectedResponse(response.status)
   }
 
-  if (!response.ok) {
-    if (isApiErrorBody(body)) {
-      const { code, message, fields } = body.error
-      throw new ApiError(response.status, code, message, fields)
-    }
-    throw new ApiError(response.status, 'invalid_response', `The server sent an unexpected response (${response.status}).`)
-  }
+  if (!response.ok) throw toApiError(response.status, body)
+  return { status: response.status, body }
+}
 
-  return body as T
+/** Sends a request and checks that the body has the expected shape. */
+async function request<T>(path: string, init: RequestInit, isExpected: (body: unknown) => body is T): Promise<T> {
+  const { status, body } = await send(path, init)
+  if (!isExpected(body)) throw unexpectedResponse(status)
+  return body
 }
 
 const notePath = (id: string): string => `/notes/${encodeURIComponent(id)}`
@@ -79,23 +111,27 @@ const notePath = (id: string): string => `/notes/${encodeURIComponent(id)}`
 export const notesApi = {
   async search(search: string, signal?: AbortSignal): Promise<Note[]> {
     const query = search ? `?${new URLSearchParams({ search }).toString()}` : ''
-    const { notes } = await request<NotesResponse>(`/notes${query}`, { signal })
+    const { notes } = await request(`/notes${query}`, { signal }, isNotesResponse)
     return notes
   },
 
   get(id: string, signal?: AbortSignal): Promise<Note> {
-    return request<Note>(notePath(id), { signal })
+    return request(notePath(id), { signal }, isNote)
   },
 
   create(input: CreateNoteInput): Promise<Note> {
-    return request<Note>('/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    })
+    return request(
+      '/notes',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+      isNote,
+    )
   },
 
-  delete(id: string): Promise<void> {
-    return request<undefined>(notePath(id), { method: 'DELETE' })
+  async delete(id: string): Promise<void> {
+    await send(notePath(id), { method: 'DELETE' })
   },
 }

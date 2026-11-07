@@ -6,6 +6,7 @@ import { App } from './App'
 import { apiError, apiUrl, db } from './test/handlers'
 import { renderWithClient } from './test/render'
 import { server } from './test/server'
+import { setViewportWidth } from './test/viewport'
 
 /** Ids of every DELETE request, recorded without changing the response. */
 let deleted: string[] = []
@@ -84,6 +85,24 @@ describe('asking first', () => {
     expect(deleted).toEqual([])
   })
 
+  it("Delete on a row's delete button asks about that row's note, not the open one", async () => {
+    const { user } = await renderApp('/?note=n1')
+    screen.getByRole('button', { name: 'Delete note Retro notes' }).focus()
+
+    await user.keyboard('{Delete}')
+
+    expect(confirmDialog()).toHaveAccessibleDescription(expect.stringContaining('"Retro notes"'))
+  })
+
+  it('Backspace on a focused row also asks (Mac keyboards label it "delete")', async () => {
+    const { user } = await renderApp('/?note=n1')
+    screen.getByRole('button', { name: 'API conventions' }).focus()
+
+    await user.keyboard('{Backspace}')
+
+    expect(confirmDialog()).toHaveAccessibleDescription(expect.stringContaining('"API conventions"'))
+  })
+
   it('Delete with no row focused asks about the open note', async () => {
     const { user } = await renderApp('/?note=n2')
     await within(detail()).findByRole('heading', { level: 2, name: 'API conventions' })
@@ -147,6 +166,43 @@ describe('deleting', () => {
     await user.click(within(confirmDialog()).getByRole('button', { name: 'Delete note' }))
 
     await waitFor(() => expect(noteParam()).toBe('n2'))
+  })
+
+  it('treats a note that is already gone (deleted by an agent) as deleted', async () => {
+    server.use(http.delete(apiUrl('/notes/:id'), () => apiError(404, 'not_found', 'Note not found.')))
+    const { user } = await renderApp('/?note=n2')
+
+    await user.click(await within(detail()).findByRole('button', { name: 'Delete' }))
+    await user.click(within(confirmDialog()).getByRole('button', { name: 'Delete note' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Note deleted')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(noteParam()).toBe('n3')
+  })
+
+  it("doesn't leave the deleted note in the browser history", async () => {
+    const { user } = await renderApp('/')
+    await user.click(screen.getByRole('button', { name: 'Sprint planning' }))
+    await user.click(screen.getByRole('button', { name: 'API conventions' }))
+
+    await user.click(within(detail()).getByRole('button', { name: 'Delete' }))
+    await user.click(within(confirmDialog()).getByRole('button', { name: 'Delete note' }))
+    await waitFor(() => expect(noteParam()).toBe('n3'))
+
+    window.history.back()
+
+    await waitFor(() => expect(noteParam()).toBe('n1'))
+  })
+
+  it('on a phone, moves focus to the next note after deleting the open one', async () => {
+    setViewportWidth(375)
+    const { user } = await renderApp('/?note=n2')
+
+    await user.click(await within(detail()).findByRole('button', { name: 'Delete' }))
+    await user.click(within(confirmDialog()).getByRole('button', { name: 'Delete note' }))
+
+    await waitFor(() => expect(detail()).toHaveFocus())
+    expect(within(detail()).getByRole('heading', { level: 2, name: 'Retro notes' })).toBeInTheDocument()
   })
 })
 

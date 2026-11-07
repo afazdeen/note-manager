@@ -6,6 +6,7 @@ import { App } from './App'
 import { apiError, apiUrl } from './test/handlers'
 import { renderWithClient } from './test/render'
 import { server } from './test/server'
+import { setViewportWidth } from './test/viewport'
 
 function renderApp(url = '/') {
   window.history.replaceState(null, '', url)
@@ -209,5 +210,57 @@ describe('selecting a note', () => {
     window.history.back()
     await waitFor(() => expect(noteParam()).toBeNull())
     expect(within(detail()).getByRole('heading', { name: 'Select a note' })).toBeInTheDocument()
+  })
+})
+
+describe('focus on desktop and on a phone', () => {
+  it('on desktop, keeps focus on the row when a note opens (both panes are visible)', async () => {
+    const { user } = renderApp()
+    const row = await screen.findByRole('button', { name: 'Retro notes' })
+
+    await user.click(row)
+
+    await within(detail()).findByRole('heading', { level: 2, name: 'Retro notes' })
+    expect(row).toHaveFocus()
+  })
+
+  it('on a phone, moves focus to the note when it opens, and back to its row with Back', async () => {
+    setViewportWidth(375)
+    const { user } = renderApp()
+
+    await user.click(await screen.findByRole('button', { name: 'Retro notes' }))
+
+    await waitFor(() => expect(detail()).toHaveFocus())
+    await user.click(within(detail()).getByRole('button', { name: 'Back' }))
+    expect(noteParam()).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retro notes' })).toHaveFocus())
+  })
+
+  it('on a phone, clicking a tag goes back to the list and focuses the search box', async () => {
+    setViewportWidth(375)
+    const { user } = renderApp('/?note=n2')
+    await within(detail()).findByRole('heading', { level: 2, name: 'API conventions' })
+    const tagInput = detail().querySelector('tag-input')
+    if (!tagInput?.shadowRoot) throw new Error('no <tag-input> in the note')
+
+    await user.click(within(tagInput.shadowRoot as unknown as HTMLElement).getByRole('button', { name: 'go' }))
+
+    expect(noteParam()).toBeNull()
+    const search = screen.getByRole('searchbox', { name: 'Search notes' })
+    expect(search).toHaveValue('go')
+    await waitFor(() => expect(search).toHaveFocus())
+  })
+})
+
+describe('screen reader text in the list', () => {
+  it('describes each row with its date and tags', async () => {
+    renderApp()
+
+    const row = await screen.findByRole('button', { name: 'API conventions' })
+
+    // The relative date ("5 days ago") depends on today, so only its position is checked.
+    expect(row).toHaveAccessibleDescription(expect.stringMatching(/^\S.* Tags: api go$/))
+    const date = within(row).getByText((_, el) => el?.tagName === 'TIME')
+    expect(row.getAttribute('aria-describedby')?.split(' ')).toContain(date.id)
   })
 })

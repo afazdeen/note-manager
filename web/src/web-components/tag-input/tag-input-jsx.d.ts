@@ -7,6 +7,8 @@ type TagInputAttributes = DetailedHTMLProps<HTMLAttributes<TagInputElement>, Tag
   value?: string
   placeholder?: string
   'max-tags'?: number
+  /** A message from the form; undefined removes it. */
+  error?: string
   /** Boolean attributes: pass '' to set, undefined to remove. */
   readonly?: ''
   disabled?: ''

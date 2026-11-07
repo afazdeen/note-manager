@@ -119,10 +119,10 @@ All three tools are `openWorldHint: false`. Errors come back as tool errors (`is
 ## 7. UI
 
 **Layout.** The header holds the app name, the search box and a **New note** button, above a purple→green gradient bar. There's a wide gap between the app name and the search box: 40 px from 768 px up. Below 768 px, the search box wraps onto its own full-width line, 16 px below the name. At 768 px and wider there are two panes under the header: the note list on the left (360 px, widening to 416 px from 1024 px, with a shortcuts hint at the bottom) and the detail view on the right. Below 768 px there is one pane at a time: the list, then the detail with a **Back** button.
-- **Selected note:** stored in the URL as `?note=<id>` with `history.pushState` and no router. Links work, and the browser's Back button returns to the list.
-- **Mobile focus:** opening a note moves focus to the detail pane, and Back returns focus to that note's row.
+- **Selected note:** stored in the URL as `?note=<id>` with `history.pushState` and no router. Links work, and the browser's Back button returns to the list. When the open note is deleted, the next note replaces it in the history (`replaceState`), so Back never leads to the deleted note.
+- **Mobile focus:** opening a note moves focus to the detail pane, and Back returns focus to that note's row. Clicking a tag in the note goes back to the list and focuses the search box.
 
-Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. The button is labelled "Delete note <title>" and turns red on hover or focus. It sits beside the row's button, not inside it, because buttons can't nest. The list is one Tab stop (the last-focused row, then the selected row, then the first), followed by that row's delete button. The detail view shows the open note in a card with rounded corners (`purple-50` background, `purple-100` border). Its loading skeleton uses the same card shape. The card holds the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a **Delete** button. The button is gray and only turns red on hover or keyboard focus.
+Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. Screen readers hear the title as the row's name, then the date and tags. The button is labelled "Delete note <title>" and turns red on hover or focus. It sits beside the row's button, not inside it, because buttons can't nest. The list is one Tab stop (the last-focused row, then the selected row, then the first), followed by that row's delete button. The detail view shows the open note in a card with rounded corners (`purple-50` background, `purple-100` border). Its loading skeleton uses the same card shape. The card holds the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a **Delete** button. The button is gray and only turns red on hover or keyboard focus.
 
 **Create dialog.** **New note**, the `n` key, or **Create your first note** (in the empty state) opens a native `<dialog>` with `showModal()`. The browser makes the page behind it inert and keeps Tab inside, so no focus-trap code is needed. It holds a title, a body textarea and an editable `<tag-input>`.
 - **Focus:** goes to the title when the dialog opens, and back to **New note** when it closes.
@@ -139,18 +139,19 @@ Each list row shows the title, a 2-line body preview, tag chips, a relative date
 | List | 4 skeleton rows; `aria-busy` | No notes: "No notes yet" + **Create your first note**. No matches: "No notes match "x"" + **Clear search** | Inline red banner + **Retry** |
 | Detail | Skeleton block | Nothing selected: "Select a note" | 404: "Note not found" (it may have been deleted, for example by an agent) + **Back to notes**. Other errors: banner + **Retry** |
 | Create | Save button disabled and reads "Saving…". Cancel and Esc are disabled too | – | Field errors under each input (client-side and from a 422). Other errors: alert at the top of the form; input is kept |
-| Delete | None: the note leaves the list at once (optimistic), and if it was open the next note is selected | – | The note comes back (and is re-selected if you haven't moved on), plus an error toast |
+| Delete | None: the note leaves the list at once (optimistic), and if it was open the next note is selected | – | The note comes back (and is re-selected if you haven't moved on), plus an error toast. A 404 isn't an error: the note was already gone (for example, an agent deleted it), so it counts as deleted |
 
 Successful create or delete shows a toast (an `aria-live="polite"` region). After a create, the new note is selected. After a delete, the row is removed from the list right away and restored if the request fails. If the deleted note was open, the next note is selected. Search is debounced by 250 ms and the previous results stay on screen while new ones load.
 
 **Data layer** (`src/api/`):
 - **Errors:** every failed call rejects with one `ApiError` (`status`, `code`, `message`, `fields`). TanStack Query is told about it, so `error` is typed everywhere. When there's no usable API response, the client adds `network_error` (status 0) or `invalid_response`.
+- **Response checks:** responses are checked, not cast. A note, a list or an error body in the wrong shape becomes `invalid_response`. An error code the app doesn't know also becomes `invalid_response`, keeping the server's message, and field messages that aren't strings are dropped.
 - **Retries:** queries retry once on network and 5xx errors, and never on 4xx.
-- **Search:** search text is trimmed, its whitespace collapsed and lowercased before it's used as the query key. Lists refetch every 15 s.
-- **Create:** refetches all lists, so the new note shows up in the right place for every search.
-- **Delete:** removes the note from every cached list at once. If the request fails, it puts it back and shows an error toast.
+- **Search:** search text is trimmed, its whitespace collapsed and lowercased before it's used as the query key. Lists and the open note refetch every 15 s.
+- **Create:** refetches all lists (without waiting, so the dialog closes at once), so the new note shows up in the right place for every search.
+- **Delete:** the mutation has a key, and lists leave out every note whose delete is still running. So the note disappears at once, a refetch during the delete (the 15 s interval, window focus, or another delete) can't bring it back, and if the request fails it simply reappears, with an error toast. On success it is removed from every cached list.
 
-**Toasts:** no library. Success toasts last 4 s and errors 8 s. At most 3 show at once, and each has a dismiss button. Success uses `role="status"` and errors `role="alert"`.
+**Toasts:** no library. Success toasts last 4 s and errors 8 s. The timer pauses while the pointer is over a toast or focus is inside it. At most 3 show at once, and each has a dismiss button. Success uses `role="status"` and errors `role="alert"`.
 
 **Keyboard** (single-key shortcuts don't fire while typing in a field)
 
@@ -160,7 +161,7 @@ Successful create or delete shows a toast (an `aria-live="polite"` region). Afte
 | `n` | New note |
 | `↑` / `↓` | Move through the list (focus moves between rows) |
 | `Enter` | Open the focused note |
-| `Delete` (or `Backspace`, labelled "delete" on Mac) | Delete the focused list row's note, otherwise the open note (opens the confirm dialog) |
+| `Delete` (or `Backspace`, labelled "delete" on Mac) | Delete the note of the focused list row (its row or its delete button), otherwise the open note (opens the confirm dialog) |
 | `Ctrl/⌘ + Enter` | Submit the create form |
 | `Esc` | Close the dialog, cancel the form, or clear the search |
 
@@ -182,7 +183,7 @@ This is a framework-free custom element written in TypeScript with a Shadow DOM.
 
 | API | Details |
 |-----|---------|
-| Attributes | `value` (comma-separated initial tags), `placeholder`, `max-tags` (default 10), `readonly`, `disabled`, `label` (accessible name) |
+| Attributes | `value` (comma-separated initial tags), `placeholder`, `max-tags` (default 10), `readonly`, `disabled`, `label` (accessible name), `error` (a message from the form, e.g. a 422 for tags: shown under the field after the element's own message, linked to the input with `aria-describedby` and announced) |
 | Property | `tags: string[]` (get/set) |
 | Events | `tags-change` → `detail: {tags}`, and `tag-click` → `detail: {tag}` (readonly mode). Both bubble and are composed |
 | Keys | `Enter` or `,` adds a tag. `Backspace` on an empty input removes the last tag. Pasting `a, b, c` adds several. Each chip has a × button labelled "Remove tag x" |
@@ -202,8 +203,8 @@ The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Tailw
 |-------|-----|----------|
 | `bg` / `white` | `#ffffff` | Page background / text on filled purple and red buttons (same value) |
 | `surface` | `#faf8fd` | List pane background |
-| `border` | `#e7e2f0` | Dividers and input borders |
-| `ink` / `ink-muted` | `#1d1630` / `#5e5873` | Main text / secondary text and dates |
+| `border` | `#e7e2f0` | Dividers (1.3:1, too light for the edge of an input) |
+| `ink` / `ink-muted` | `#1d1630` / `#5e5873` | Main text / secondary text, dates and input borders (6.7:1, above the 3:1 an input's edge needs) |
 | `purple-50` | `#f6effe` | Hover, the selected list row, and the open-note card background |
 | `purple-100` | `#ead9fc` | Tag chip background and the open-note card border |
 | `purple-500` | `#9d52e8` | **Base**: focus ring, selected-row edge, gradient start |
@@ -233,7 +234,7 @@ web/
   src/components/toast/           ToastProvider.tsx  toast-context.ts (useToast)
   src/web-components/tag-input/   tag-input.ts  tag-rules.ts  TagInput.tsx  tag-input-jsx.d.ts  *.test.ts(x)
   src/hooks/                      useShortcuts  useNoteParam (?note=)  useDebouncedValue  useMediaQuery
-  src/test/                       MSW handlers + in-memory db, server, setup, render helpers
+  src/test/                       MSW handlers + in-memory db, server, setup, render helpers, viewport (matchMedia stub)
   App.tsx  main.tsx  index.css    App.test.tsx  CreateNote.test.tsx  DeleteNote.test.tsx (app-level flows)
   .env.example  package.json  vite.config.ts  eslint.config.js
 .github/workflows/                api.yml  web.yml (lint, test, build when that app's files change, on push and PR)
@@ -246,7 +247,7 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 - **Go HTTP** (`httptest`): POST 201 and 422 with the error shape, GET with `search`, DELETE 204 and 404, CORS preflight from the allowed origin vs another origin.
 - **Go MCP** (in-memory transport and SDK client): `create_note` then `search_notes` finds the note. `delete_note` without `confirm` is refused.
 - **Go wiring** (`cmd/server`, real loopback listener): `/api` has CORS and `/mcp` doesn't, `/mcp` refuses other sites and DNS rebinding, unknown routes get the JSON 404, and every request is logged.
-- **Web** (Vitest, Testing Library, MSW): list loading, empty, error and retry. The create flow, including a server 422. Deleting from a list row through the confirm dialog. `<tag-input>` add, normalise, Backspace removal and events. The `/` and `n` shortcuts.
+- **Web** (Vitest, Testing Library, MSW): list loading, empty, error and retry. The create flow, including a server 422 (tags errors linked to the tag input). Deleting from a list row through the confirm dialog, the `Delete` and `Backspace` keys, a 404 counting as deleted, and the history after a delete. Delete cache cases: a refetch during a pending delete, and one failing delete next to a successful one. API response checks. Toast pausing. `<tag-input>` add, normalise, Backspace removal, events and the `error` attribute. The `/` and `n` shortcuts. Phone-width behaviour (focus on open, Back, tag click, delete) with a `matchMedia` stub (`src/test/viewport.ts`), since jsdom has none.
 
 ## 12. Build order (~3 h)
 

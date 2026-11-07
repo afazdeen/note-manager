@@ -58,6 +58,49 @@ describe('notesApi', () => {
     expect(error.message).toMatch(/can't reach the server/i)
   })
 
+  it('rejects a success response that is not a note', async () => {
+    server.use(http.get(apiUrl('/notes/:id'), () => HttpResponse.json({ id: 'n1', title: 42 })))
+
+    const error = await rejection(notesApi.get('n1'))
+
+    expect(error).toMatchObject({ status: 200, code: 'invalid_response' })
+  })
+
+  it('rejects a list whose notes are not in the API shape', async () => {
+    server.use(http.get(apiUrl('/notes'), () => HttpResponse.json({ notes: [{ id: 'n1' }] })))
+
+    const error = await rejection(notesApi.search(''))
+
+    expect(error).toMatchObject({ status: 200, code: 'invalid_response' })
+  })
+
+  it('keeps the message of an unknown error code, but reports the code as invalid_response', async () => {
+    server.use(
+      http.delete(apiUrl('/notes/:id'), () =>
+        HttpResponse.json({ error: { code: 'forbidden', message: 'Not allowed.' } }, { status: 403 }),
+      ),
+    )
+
+    const error = await rejection(notesApi.delete('n1'))
+
+    expect(error).toMatchObject({ status: 403, code: 'invalid_response', message: 'Not allowed.' })
+  })
+
+  it('drops field messages that are not strings', async () => {
+    server.use(
+      http.post(apiUrl('/notes'), () =>
+        HttpResponse.json(
+          { error: { code: 'validation_failed', message: 'Some fields are invalid.', fields: { title: 'is required', body: 7 } } },
+          { status: 422 },
+        ),
+      ),
+    )
+
+    const error = await rejection(notesApi.create({ title: '' }))
+
+    expect(error.fields).toEqual({ title: 'is required' })
+  })
+
   it('keeps the error code and message from the API', async () => {
     server.use(http.delete(apiUrl('/notes/:id'), () => apiError(404, 'not_found', 'Note not found.')))
 

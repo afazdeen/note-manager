@@ -64,6 +64,40 @@ describe('ToastProvider', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('pauses while hovered and resumes with the time that was left', () => {
+    vi.useFakeTimers()
+    renderToasts()
+    fireEvent.click(screen.getByRole('button', { name: 'error' }))
+
+    act(() => vi.advanceTimersByTime(5_000))
+    fireEvent.mouseEnter(screen.getByRole('alert'))
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+
+    fireEvent.mouseLeave(screen.getByRole('alert'))
+    act(() => vi.advanceTimersByTime(2_900))
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    act(() => vi.advanceTimersByTime(100))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('stays while focus is inside it, even after the pointer leaves', () => {
+    vi.useFakeTimers()
+    renderToasts()
+    fireEvent.click(screen.getByRole('button', { name: 'success' }))
+
+    const dismiss = screen.getByRole('button', { name: 'Dismiss notification' })
+    act(() => dismiss.focus())
+    fireEvent.mouseEnter(screen.getByRole('status'))
+    fireEvent.mouseLeave(screen.getByRole('status'))
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(screen.getByRole('status')).toBeInTheDocument()
+
+    act(() => dismiss.blur())
+    act(() => vi.advanceTimersByTime(4_000))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
   it('shows at most three toasts, dropping the oldest', () => {
     renderToasts()
     const success = screen.getByRole('button', { name: 'success' })

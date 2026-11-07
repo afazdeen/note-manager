@@ -3,6 +3,7 @@ import { cleanup } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { db } from './handlers'
 import { server } from './server'
+import { resetViewport } from './viewport'
 
 // jsdom has <dialog> but not showModal()/close(). These stand-ins only toggle
 // `open`; real browsers also make the page inert and trap focus.
@@ -22,5 +23,6 @@ afterEach(() => {
   server.resetHandlers()
   db.reset()
   cleanup()
+  resetViewport()
 })
 afterAll(() => server.close())

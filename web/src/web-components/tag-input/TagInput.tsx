@@ -14,6 +14,8 @@ export interface TagInputProps {
   maxTags?: number
   readOnly?: boolean
   disabled?: boolean
+  /** A validation message from the form. It is shown under the field and linked to its input. */
+  error?: string
   className?: string
 }
 
@@ -30,6 +32,7 @@ export function TagInput({
   maxTags,
   readOnly = false,
   disabled = false,
+  error,
   className,
 }: Readonly<TagInputProps>) {
   const ref = useRef<TagInputElement>(null)
@@ -65,6 +68,7 @@ export function TagInput({
       max-tags={maxTags}
       readonly={readOnly ? '' : undefined}
       disabled={disabled ? '' : undefined}
+      error={error || undefined}
       className={className}
     />
   )

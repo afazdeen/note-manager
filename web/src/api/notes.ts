@@ -2,16 +2,18 @@ import {
   keepPreviousData,
   skipToken,
   useMutation,
+  useMutationState,
   useQuery,
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
+import { useCallback } from 'react'
 import { useToast } from '../components/toast/toast-context'
-import { notesApi, type ApiError } from './client'
+import { ApiError, notesApi } from './client'
 import type { Note } from './types'
 
-/** How often lists refetch, so notes changed by agents over MCP show up. */
-const LIST_REFETCH_INTERVAL_MS = 15_000
+/** How often lists and the open note refetch, so changes made by agents over MCP show up. */
+const REFETCH_INTERVAL_MS = 15_000
 
 /** Trims, collapses whitespace and lowercases, so "Go  API" and "go api" share a cache entry. */
 export function normalizeSearch(search: string): string {
@@ -26,17 +28,43 @@ export const noteKeys = {
   detail: (id: string) => [...noteKeys.details(), id] as const,
 }
 
+/** Identifies delete mutations, so lists can hide the notes being deleted. */
+const deleteNoteKey = [...noteKeys.all, 'delete'] as const
+
+/** Ids of the notes whose delete request hasn't finished yet. */
+function usePendingDeletes(): string[] {
+  return useMutationState({
+    filters: { mutationKey: deleteNoteKey, status: 'pending' },
+    select: (mutation) => mutation.state.variables,
+  }).filter((id): id is string => typeof id === 'string')
+}
+
 /**
  * Notes matching `search` (all notes when empty), newest first. While a new
  * search loads, the previous results stay in `data` and `isPlaceholderData` is true.
+ *
+ * Notes being deleted are left out. That is the optimistic part of a delete:
+ * a refetch that lands before the server has deleted the note can't bring it
+ * back, and if the delete fails the note simply reappears.
  */
 export function useNotesSearch(search: string) {
   const term = normalizeSearch(search)
+  // A string key, so the select function only changes when the pending set does.
+  const pendingKey = usePendingDeletes().join('\n')
+  const hidePending = useCallback(
+    (notes: Note[]): Note[] => {
+      if (pendingKey === '') return notes
+      const pending = new Set(pendingKey.split('\n'))
+      return notes.filter((n) => !pending.has(n.id))
+    },
+    [pendingKey],
+  )
   return useQuery({
     queryKey: noteKeys.list(term),
     queryFn: ({ signal }) => notesApi.search(term, signal),
+    select: hidePending,
     placeholderData: keepPreviousData,
-    refetchInterval: LIST_REFETCH_INTERVAL_MS,
+    refetchInterval: REFETCH_INTERVAL_MS,
   })
 }
 
@@ -50,7 +78,11 @@ function findInLists(queryClient: QueryClient, id: string): Note | undefined {
 
 type NoteDetailKey = ReturnType<typeof noteKeys.detail>
 
-/** One note. Shows the copy from a loaded list at once while the fresh one loads. */
+/**
+ * One note. Shows the copy from a loaded list at once while the fresh one
+ * loads, and refetches like the lists so a note deleted by an agent turns
+ * into "Note not found".
+ */
 export function useNote(id: string | undefined) {
   const queryClient = useQueryClient()
   // Explicit types: otherwise TypeScript infers the data type from placeholderData.
@@ -58,6 +90,7 @@ export function useNote(id: string | undefined) {
     queryKey: noteKeys.detail(id ?? ''),
     queryFn: id === undefined ? skipToken : ({ signal }) => notesApi.get(id, signal),
     placeholderData: () => (id === undefined ? undefined : findInLists(queryClient, id)),
+    refetchInterval: REFETCH_INTERVAL_MS,
   })
 }
 
@@ -70,42 +103,45 @@ export function useCreateNote() {
   const toast = useToast()
   return useMutation({
     mutationFn: notesApi.create,
-    onSuccess: async (note) => {
+    onSuccess: (note) => {
       queryClient.setQueryData(noteKeys.detail(note.id), note)
       toast.success('Note created')
-      await queryClient.invalidateQueries({ queryKey: noteKeys.lists() })
+      // Not awaited: the dialog can close while the lists refetch.
+      void queryClient.invalidateQueries({ queryKey: noteKeys.lists() })
     },
   })
 }
 
+/** Deletes a note. A note that is already gone (e.g. an agent deleted it) counts as deleted. */
+async function deleteNote(id: string): Promise<void> {
+  try {
+    await notesApi.delete(id)
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 'not_found') return
+    throw error
+  }
+}
+
 /**
- * Deletes a note optimistically: it leaves every cached list at once, and
- * comes back with an error toast if the request fails.
+ * Deletes a note optimistically: useNotesSearch hides it while the request
+ * runs. On success it is removed from every cached list; on failure it comes
+ * back on its own, with an error toast.
  */
 export function useDeleteNote() {
   const queryClient = useQueryClient()
   const toast = useToast()
   return useMutation({
-    mutationFn: (id: string) => notesApi.delete(id),
-    onMutate: async (id) => {
-      // Stop in-flight list fetches so they can't overwrite the optimistic update.
-      await queryClient.cancelQueries({ queryKey: noteKeys.lists() })
-      const previousLists = queryClient.getQueriesData<Note[]>({ queryKey: noteKeys.lists() })
-      queryClient.setQueriesData<Note[]>({ queryKey: noteKeys.lists() }, (notes) =>
-        notes?.filter((n) => n.id !== id),
-      )
-      return { previousLists }
-    },
-    onError: (error, _id, context) => {
-      for (const [key, notes] of context?.previousLists ?? []) {
-        queryClient.setQueryData(key, notes)
-      }
-      toast.error(`Couldn't delete the note. ${error.message}`)
-    },
+    mutationKey: deleteNoteKey,
+    mutationFn: deleteNote,
     onSuccess: (_data, id) => {
+      queryClient.setQueriesData<Note[]>({ queryKey: noteKeys.lists() }, (notes) => notes?.filter((n) => n.id !== id))
       queryClient.removeQueries({ queryKey: noteKeys.detail(id) })
       toast.success('Note deleted')
     },
+    onError: (error) => {
+      toast.error(`Couldn't delete the note. ${error.message}`)
+    },
+    // Awaited, so the note stays hidden until the lists have caught up.
     onSettled: () => queryClient.invalidateQueries({ queryKey: noteKeys.lists() }),
   })
 }
