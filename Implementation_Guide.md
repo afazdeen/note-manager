@@ -94,7 +94,7 @@ The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk`) a
 | | `SEED_NOTES` | `true` | Load the demo notes on start |
 | `web/.env.example` | `VITE_API_BASE_URL` | `http://localhost:8080/api` | API base URL |
 
-`godotenv.Load()` reads `api/.env` if it exists, and real environment variables take priority. The CORS middleware wraps `/api` only. When `Origin` exactly matches the allowed origin, it sets `Access-Control-Allow-Origin` (plus `Vary: Origin`), allows `GET, POST, DELETE` and the `Content-Type` header, and answers preflight requests with 204. Other origins get no CORS headers, so the browser blocks them. `/mcp` gets no CORS headers because MCP clients are not browser pages.
+`godotenv.Load()` reads `api/.env` if it exists, and real environment variables take priority. The CORS middleware wraps `/api` only. When `Origin` exactly matches the allowed origin, it sets `Access-Control-Allow-Origin` (plus `Vary: Origin`), allows `GET, POST, DELETE` and the `Content-Type` header, and answers preflight requests with 204. Other origins get no CORS headers, so the browser blocks them. Their preflights, and preflights for any other method, are refused with 403. Invalid env values (such as a bad port, a wildcard or a path in the origin, or a non-boolean seed flag) stop the server at startup with every problem listed. `/mcp` gets no CORS headers because MCP clients are not browser pages.
 
 ## 7. UI
 
@@ -142,11 +142,11 @@ A small `TagInput.tsx` wrapper connects props and events with a `ref`, and a JSX
 
 ## 9. Design tokens
 
-The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Text contrast meets WCAG AA (at least 4.5:1).
+The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Tailwind's default palette is removed, so only these colours exist. Text contrast meets WCAG AA (at least 4.5:1).
 
 | Token | Hex | Used for |
 |-------|-----|----------|
-| `bg` | `#ffffff` | Page background |
+| `bg` / `white` | `#ffffff` | Page background / text on filled purple and red buttons (same value) |
 | `surface` | `#faf8fd` | List pane and cards |
 | `border` | `#e7e2f0` | Dividers and input borders |
 | `ink` / `ink-muted` | `#1d1630` / `#5e5873` | Main text / secondary text and dates |
@@ -159,7 +159,7 @@ The tokens are defined once in Tailwind v4 `@theme` (`web/src/index.css`). Text 
 | `green-400` | `#33ff94` | **Base**: gradient end, small accent dot only (never text) |
 | `green-700` | `#0a7a40` | Success text and icons (~5.4:1) |
 | `red-50` / `red-600` / `red-700` | `#fef2f2` / `#dc2626` / `#b91c1c` | Error banner background / error text and Delete button / Delete hover |
-| `gradient-brand` | `linear-gradient(90deg, #9d52e8, #33ff94)` | Header bar and the empty-state illustration accent |
+| `gradient-brand` | `linear-gradient(90deg, #9d52e8, #33ff94)` | Header bar and the empty-state illustration accent (utility: `bg-gradient-brand`) |
 
 ## 10. Folder layout
 
@@ -168,16 +168,19 @@ api/
   cmd/server/main.go              config, seed data, mux wiring, graceful shutdown
   internal/config/config.go
   internal/notes/                 model.go  service.go  repository.go  seed.go  *_test.go
-  internal/httpapi/               handlers.go  errors.go  cors.go  handlers_test.go
+  internal/httpapi/               handlers.go  errors.go  cors.go  logging.go  *_test.go
   internal/mcp/                   server.go  tools.go  tools_test.go  note.md
   go.mod  .env.example
 web/
+  src/config/env.ts               the only reader of import.meta.env (typed, validated)
+  src/lib/queryClient.ts
   src/api/                        client.ts  notes.ts (query hooks)  types.ts
   src/components/                 NoteList  NoteDetail  CreateNoteForm  SearchBar  ConfirmDialog  Toast  EmptyState  Skeleton
   src/web-components/tag-input/   tag-input.ts  TagInput.tsx  tag-input.test.ts
-  src/hooks/useShortcuts.ts       src/test/ (MSW handlers, setup)   App.tsx  main.tsx  index.css
-  .env.example  package.json  vite.config.ts
-README.md  Implementation_Guide.md
+  src/hooks/useShortcuts.ts       src/test/ (MSW server, setup, render helper)   App.tsx  main.tsx  index.css
+  .env.example  package.json  vite.config.ts  eslint.config.js
+.github/workflows/                api.yml  web.yml (lint, test, build when that app's files change, on push and PR)
+README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 ```
 
 ## 11. Test plan

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens from Implementation_Guide.md section 9.
+ * Tailwind's default palette is removed, so only these colours exist.
+ */
+@theme {
+  --color-*: initial;
+
+  --color-bg: #ffffff;
+  --color-white: #ffffff; /* same as bg: text on filled purple/red buttons */
+  --color-surface: #faf8fd;
+  --color-border: #e7e2f0;
+  --color-ink: #1d1630;
+  --color-ink-muted: #5e5873;
+
+  --color-purple-50: #f6effe;
+  --color-purple-100: #ead9fc;
+  --color-purple-500: #9d52e8;
+  --color-purple-600: #8636d6;
+  --color-purple-700: #6c25b3;
+
+  --color-green-50: #ebfff4;
+  --color-green-400: #33ff94;
+  --color-green-700: #0a7a40;
+
+  --color-red-50: #fef2f2;
+  --color-red-600: #dc2626;
+  --color-red-700: #b91c1c;
+}
+
+@utility bg-gradient-brand {
+  background-image: linear-gradient(90deg, var(--color-purple-500), var(--color-green-400));
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-purple-500);
+    outline-offset: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

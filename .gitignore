@@ -1,0 +1,34 @@
+# Environment files (secrets). Only the .env.example files are committed.
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+api/bin/
+*.exe
+*.test
+*.out
+
+# Test and coverage output
+coverage/
+*.coverprofile
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor and OS files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db
+
+# Vite cache
+*.local
+.vite/
