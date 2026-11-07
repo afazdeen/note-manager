@@ -1,0 +1,14 @@
+# Installed and built inside the image instead.
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Local settings. VITE_API_BASE_URL comes from the build argument, not a .env file.
+.env
+.env.*
+!.env.example
+
+Dockerfile
+.dockerignore
+*.log

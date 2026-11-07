@@ -35,6 +35,35 @@ cd api && gofmt -l . && go vet ./... && go test ./...
 cd web && npm run typecheck && npm run lint && npm test -- --run && npm run build
 ```
 
+## Run with Docker
+
+You only need Docker (with Compose v2). To run the whole app:
+
+```bash
+docker compose up --build      # web: http://localhost:3000   API and MCP: http://localhost:8080
+docker compose down            # stop and remove the containers
+```
+
+Ports are published on `127.0.0.1` only, because there's no authentication. To use other ports, set `WEB_PORT` and `API_PORT`, for example `WEB_PORT=4000 docker compose up --build`. The API's allowed origin and the web app's API URL follow automatically.
+
+To build and run each image on its own:
+
+```bash
+# API: a static binary on distroless (~19 MB)
+docker build -t team-notes-api ./api
+docker run --rm -p 127.0.0.1:8080:8080 -e CORS_ALLOWED_ORIGIN=http://localhost:3000 team-notes-api
+
+# Web: the built app on unprivileged nginx (~30 MB)
+docker build -t team-notes-web --build-arg VITE_API_BASE_URL=http://localhost:8080/api ./web
+docker run --rm -p 127.0.0.1:3000:8080 team-notes-web
+```
+
+The browser calls the API directly, so two settings have to match:
+- `CORS_ALLOWED_ORIGIN` is the web app's URL.
+- `VITE_API_BASE_URL` is the API's URL *as the browser sees it*. Vite builds it into the app, so it's a build argument, not something you can change with `docker run -e`.
+
+Both Dockerfiles are multi-stage, so no compilers, Node or source code end up in the final images, and both run as non-root. Compose also makes the containers read-only and drops all Linux capabilities.
+
 ## Connect an agent (MCP)
 
 With the API running, the MCP server is at `http://localhost:8080/mcp` (Streamable HTTP). It has three tools: `search_notes` (read-only), `create_note`, and `delete_note` (destructive).

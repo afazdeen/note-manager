@@ -225,7 +225,7 @@ api/
   internal/note/                  note.go (type, validation)  service.go (+ Repository interface)  memory.go  seed.go  *_test.go
   internal/httpapi/               handlers.go  errors.go  json.go  cors.go  logging.go  recover.go  *_test.go
   internal/mcp/                   server.go  tools.go  schema.go (portable schemas)  tools_test.go  note.md
-  go.mod  .env.example
+  go.mod  .env.example  Dockerfile (Go build → distroless, ~19 MB)  .dockerignore
 web/
   src/config/env.ts               the only reader of import.meta.env (typed, validated)
   src/lib/                        queryClient.ts  format.ts (relative and full dates)  validateNote.ts (same rules as the API)
@@ -237,7 +237,9 @@ web/
   src/test/                       MSW handlers + in-memory db, server, setup, render helpers, viewport (matchMedia stub)
   App.tsx  main.tsx  index.css    App.test.tsx  CreateNote.test.tsx  DeleteNote.test.tsx (app-level flows)
   .env.example  package.json  vite.config.ts  eslint.config.js
+  Dockerfile (Node build → unprivileged nginx alpine-slim, ~30 MB)  nginx.conf  .dockerignore
 .github/workflows/                api.yml  web.yml (lint, test, build when that app's files change, on push and PR)
+compose.yaml                      api + web; ports on 127.0.0.1 (WEB_PORT 3000, API_PORT 8080); read-only, no capabilities
 README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 ```
 
@@ -262,7 +264,7 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 
 ## 13. Out of scope
 
-Editing notes, users and authentication (described in `note.md` only), SQLite and other persistence, pagination, Markdown rendering, live push updates (the UI polls instead), a client-side router (only `?note=` is in the URL), dark mode, Docker and deployment, i18n.
+Editing notes, users and authentication (described in `note.md` only), SQLite and other persistence, pagination, Markdown rendering, live push updates (the UI polls instead), a client-side router (only `?note=` is in the URL), dark mode, deployment (Docker images and Compose are for running locally; there's no registry, TLS or hosting setup), i18n.
 
 ## 14. Assumptions
 

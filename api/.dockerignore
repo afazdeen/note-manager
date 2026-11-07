@@ -1,0 +1,11 @@
+# Only the Go sources, go.mod and go.sum are needed to build the image.
+.env
+.env.*
+bin/
+*.exe
+*.test
+*.out
+*.coverprofile
+coverage/
+Dockerfile
+.dockerignore
