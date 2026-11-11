@@ -107,16 +107,22 @@ func TestListNotes(t *testing.T) {
 	h, _ := newTestAPI(t, fixtures...)
 
 	tests := []struct {
-		name    string
-		path    string
-		wantIDs []string
+		name      string
+		path      string
+		wantIDs   []string
+		wantTotal int
 	}{
-		{"no search lists all, newest first", "/api/notes", []string{"new", "mid", "old"}},
-		{"empty search lists all", "/api/notes?search=", []string{"new", "mid", "old"}},
-		{"search ignores case", "/api/notes?search=GO", []string{"old"}},
-		{"search matches tags", "/api/notes?search=team", []string{"mid"}},
-		{"every term must match", "/api/notes?search=sprint+roadmap", []string{"new"}},
-		{"no match gives an empty list", "/api/notes?search=kubernetes", []string{}},
+		{"no params gives the first page of 2, newest first", "/api/notes", []string{"new", "mid"}, 3},
+		{"empty params use the defaults", "/api/notes?search=&offset=&limit=", []string{"new", "mid"}, 3},
+		{"offset gives the next page", "/api/notes?offset=2", []string{"old"}, 3},
+		{"limit sets the page size", "/api/notes?limit=50", []string{"new", "mid", "old"}, 3},
+		{"offset and limit together", "/api/notes?offset=1&limit=1", []string{"mid"}, 3},
+		{"offset past the end gives an empty page", "/api/notes?offset=10", []string{}, 3},
+		{"search ignores case", "/api/notes?search=GO", []string{"old"}, 1},
+		{"search matches tags", "/api/notes?search=team", []string{"mid"}, 1},
+		{"every term must match", "/api/notes?search=sprint+roadmap", []string{"new"}, 1},
+		{"search pages its matches", "/api/notes?search=the&limit=1&offset=1", []string{"old"}, 2},
+		{"no match gives an empty list", "/api/notes?search=kubernetes", []string{}, 0},
 	}
 
 	for _, tt := range tests {
@@ -124,14 +130,48 @@ func TestListNotes(t *testing.T) {
 			rec := do(h, httptest.NewRequest(http.MethodGet, tt.path, nil))
 
 			if rec.Code != http.StatusOK {
-				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, http.StatusOK, rec.Body)
 			}
 			got := decode[listResponse](t, rec)
 			if got.Notes == nil {
 				t.Fatalf("body %s: notes is null, want an array", rec.Body)
 			}
-			if ids := noteIDs(got.Notes); !slices.Equal(ids, tt.wantIDs) {
-				t.Errorf("ids = %v, want %v", ids, tt.wantIDs)
+			if ids := noteIDs(got.Notes); !slices.Equal(ids, tt.wantIDs) || got.Total != tt.wantTotal {
+				t.Errorf("ids = %v (total %d), want %v (total %d)", ids, got.Total, tt.wantIDs, tt.wantTotal)
+			}
+		})
+	}
+}
+
+func TestListNotesPagingErrors(t *testing.T) {
+	h, _ := newTestAPI(t, fixtures...)
+
+	tests := []struct {
+		name       string
+		path       string
+		wantStatus int
+		wantCode   string
+		wantInMsg  string   // for 400
+		wantFields []string // for 422
+	}{
+		{"limit not a number", "/api/notes?limit=abc", http.StatusBadRequest, codeBadRequest, `"limit" must be an integer`, nil},
+		{"offset not a number", "/api/notes?offset=1.5", http.StatusBadRequest, codeBadRequest, `"offset" must be an integer`, nil},
+		{"limit too large for an int", "/api/notes?limit=99999999999999999999", http.StatusBadRequest, codeBadRequest, `"limit"`, nil},
+		{"limit zero", "/api/notes?limit=0", http.StatusUnprocessableEntity, codeValidationFailed, "", []string{"limit"}},
+		{"limit over the maximum", "/api/notes?limit=51", http.StatusUnprocessableEntity, codeValidationFailed, "", []string{"limit"}},
+		{"negative offset", "/api/notes?offset=-1", http.StatusUnprocessableEntity, codeValidationFailed, "", []string{"offset"}},
+		{"both out of range", "/api/notes?offset=-1&limit=0", http.StatusUnprocessableEntity, codeValidationFailed, "", []string{"limit", "offset"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := assertError(t, do(h, httptest.NewRequest(http.MethodGet, tt.path, nil)), tt.wantStatus, tt.wantCode)
+
+			if !strings.Contains(body.Message, tt.wantInMsg) {
+				t.Errorf("message = %q, want it to contain %q", body.Message, tt.wantInMsg)
+			}
+			if gotFields := slices.Sorted(maps.Keys(body.Fields)); !slices.Equal(gotFields, tt.wantFields) {
+				t.Errorf("fields = %v, want %v", body.Fields, tt.wantFields)
 			}
 		})
 	}
@@ -224,8 +264,8 @@ func TestCreateNoteErrors(t *testing.T) {
 			if gotFields := slices.Sorted(maps.Keys(body.Fields)); !slices.Equal(gotFields, tt.wantFields) {
 				t.Errorf("fields = %v, want %v", body.Fields, tt.wantFields)
 			}
-			if all, _ := svc.Search(context.Background(), ""); len(all) != 0 {
-				t.Errorf("%d notes stored after a failed create, want 0", len(all))
+			if all, _ := svc.Search(context.Background(), "", 0, note.MaxPageSize); all.Total != 0 {
+				t.Errorf("%d notes stored after a failed create, want 0", all.Total)
 			}
 		})
 	}
@@ -312,9 +352,11 @@ type failingService struct{ err error }
 func (f failingService) Create(context.Context, note.CreateInput) (note.Note, error) {
 	return note.Note{}, f.err
 }
-func (f failingService) Get(context.Context, string) (note.Note, error)      { return note.Note{}, f.err }
-func (f failingService) Search(context.Context, string) ([]note.Note, error) { return nil, f.err }
-func (f failingService) Delete(context.Context, string) (note.Note, error)   { return note.Note{}, f.err }
+func (f failingService) Get(context.Context, string) (note.Note, error) { return note.Note{}, f.err }
+func (f failingService) Search(context.Context, string, int, int) (note.Page, error) {
+	return note.Page{}, f.err
+}
+func (f failingService) Delete(context.Context, string) (note.Note, error) { return note.Note{}, f.err }
 
 func TestServiceFailuresDoNotLeakDetails(t *testing.T) {
 	const secret = "sqlite: database is locked at /var/data/notes.db"

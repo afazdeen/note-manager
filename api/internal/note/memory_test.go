@@ -86,8 +86,8 @@ func TestMemoryRepositoryReturnsCopies(t *testing.T) {
 	input.Tags[0] = "changed-input" // caller changes its slice after Create
 	got, _ := repo.Get(ctx, "n1")
 	got.Tags[0] = "changed-get"
-	found, _ := repo.Search(ctx, nil)
-	found[0].Tags[0] = "changed-search"
+	found, _ := repo.Search(ctx, nil, 0, MaxPageSize)
+	found.Notes[0].Tags[0] = "changed-search"
 
 	stored, _ := repo.Get(ctx, "n1")
 	if !slices.Equal(stored.Tags, []string{"original"}) {
@@ -120,12 +120,56 @@ func TestMemoryRepositorySearch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := repo.Search(ctx, tt.terms)
+			got, err := repo.Search(ctx, tt.terms, 0, MaxPageSize)
 			if err != nil {
 				t.Fatalf("Search() error = %v", err)
 			}
-			if gotIDs := ids(got); !slices.Equal(gotIDs, tt.wantIDs) {
-				t.Errorf("Search(%v) = %v, want %v", tt.terms, gotIDs, tt.wantIDs)
+			if gotIDs := ids(got.Notes); !slices.Equal(gotIDs, tt.wantIDs) || got.Total != len(tt.wantIDs) {
+				t.Errorf("Search(%v) = %v (total %d), want %v (total %d)", tt.terms, gotIDs, got.Total, tt.wantIDs, len(tt.wantIDs))
+			}
+		})
+	}
+}
+
+// Paging happens after matching and ordering, like SQL's LIMIT/OFFSET, and
+// Total counts the matches, not the page.
+func TestMemoryRepositorySearchPage(t *testing.T) {
+	repo := NewMemoryRepository()
+	ctx := context.Background()
+	mustCreate(t, repo,
+		Note{ID: "a", Title: "Plan one", CreatedAt: fixedNow.Add(-3 * time.Hour)},
+		Note{ID: "b", Title: "Plan two", CreatedAt: fixedNow.Add(-2 * time.Hour)},
+		Note{ID: "c", Title: "Lunch", CreatedAt: fixedNow.Add(-1 * time.Hour)},
+		Note{ID: "d", Title: "Plan three", CreatedAt: fixedNow},
+	)
+
+	tests := []struct {
+		name          string
+		terms         []string
+		offset, limit int
+		wantIDs       []string
+		wantTotal     int
+	}{
+		{"first page of all", nil, 0, 2, []string{"d", "c"}, 4},
+		{"second page of all", nil, 2, 2, []string{"b", "a"}, 4},
+		{"pages the matches, not every note", []string{"plan"}, 1, 2, []string{"b", "a"}, 3},
+		{"short last page", []string{"plan"}, 2, 2, []string{"a"}, 3},
+		{"offset past the end", []string{"plan"}, 3, 2, []string{}, 3},
+		{"no match", []string{"nothing"}, 0, 2, []string{}, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := repo.Search(ctx, tt.terms, tt.offset, tt.limit)
+			if err != nil {
+				t.Fatalf("Search() error = %v", err)
+			}
+			if got.Notes == nil {
+				t.Fatal("Search() notes = nil, want a non-nil slice")
+			}
+			if gotIDs := ids(got.Notes); !slices.Equal(gotIDs, tt.wantIDs) || got.Total != tt.wantTotal {
+				t.Errorf("Search(%v, %d, %d) = %v (total %d), want %v (total %d)",
+					tt.terms, tt.offset, tt.limit, gotIDs, got.Total, tt.wantIDs, tt.wantTotal)
 			}
 		})
 	}
@@ -159,8 +203,8 @@ func TestMemoryRepositoryDelete(t *testing.T) {
 			if deleted.ID != tt.wantID {
 				t.Errorf("Delete() returned id %q, want %q", deleted.ID, tt.wantID)
 			}
-			if all, _ := repo.Search(ctx, nil); len(all) != tt.wantLen {
-				t.Errorf("%d notes left, want %d", len(all), tt.wantLen)
+			if all, _ := repo.Search(ctx, nil, 0, MaxPageSize); all.Total != tt.wantLen {
+				t.Errorf("%d notes left, want %d", all.Total, tt.wantLen)
 			}
 			if _, err := repo.Get(ctx, tt.id); !errors.Is(err, ErrNotFound) {
 				t.Errorf("Get(%q) after Delete() error = %v, want ErrNotFound", tt.id, err)
@@ -182,7 +226,7 @@ func TestMemoryRepositoryConcurrentUse(t *testing.T) {
 			if err := repo.Create(ctx, Note{ID: id, Title: id, Tags: []string{"load"}, CreatedAt: fixedNow}); err != nil {
 				t.Errorf("Create(%q) error = %v", id, err)
 			}
-			_, _ = repo.Search(ctx, []string{"load"})
+			_, _ = repo.Search(ctx, []string{"load"}, 0, DefaultPageSize)
 			_, _ = repo.Get(ctx, id)
 			if i%2 == 0 {
 				if _, err := repo.Delete(ctx, id); err != nil {
@@ -193,7 +237,7 @@ func TestMemoryRepositoryConcurrentUse(t *testing.T) {
 	}
 	wg.Wait()
 
-	if all, _ := repo.Search(ctx, nil); len(all) != workers/2 {
-		t.Errorf("%d notes left, want %d", len(all), workers/2)
+	if all, _ := repo.Search(ctx, nil, 0, MaxPageSize); all.Total != workers/2 {
+		t.Errorf("%d notes left, want %d", all.Total, workers/2)
 	}
 }

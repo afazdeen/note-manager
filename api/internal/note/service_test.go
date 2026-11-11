@@ -162,8 +162,8 @@ func TestServiceCreateValidation(t *testing.T) {
 					t.Errorf("message = %q, want it to contain %q", msg, tt.wantInMsg)
 				}
 			}
-			if all, _ := repo.Search(ctx, nil); len(all) != 0 {
-				t.Errorf("repository has %d notes after a failed create, want 0", len(all))
+			if all, _ := repo.Search(ctx, nil, 0, MaxPageSize); all.Total != 0 {
+				t.Errorf("repository has %d notes after a failed create, want 0", all.Total)
 			}
 		})
 	}
@@ -175,16 +175,16 @@ type termsRecorder struct {
 	terms []string
 }
 
-func (r *termsRecorder) Search(ctx context.Context, terms []string) ([]Note, error) {
+func (r *termsRecorder) Search(ctx context.Context, terms []string, offset, limit int) (Page, error) {
 	r.terms = terms
-	return r.MemoryRepository.Search(ctx, terms)
+	return r.MemoryRepository.Search(ctx, terms, offset, limit)
 }
 
 func TestServiceSearchPassesEachTermOnce(t *testing.T) {
 	repo := &termsRecorder{MemoryRepository: NewMemoryRepository()}
 	svc := NewService(repo)
 
-	if _, err := svc.Search(context.Background(), "plan API plan  api PLAN"); err != nil {
+	if _, err := svc.Search(context.Background(), "plan API plan  api PLAN", 0, DefaultPageSize); err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
 	if want := []string{"api", "plan"}; !slices.Equal(repo.terms, want) {
@@ -226,15 +226,88 @@ func TestServiceSearch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := svc.Search(ctx, tt.query)
+			got, err := svc.Search(ctx, tt.query, 0, MaxPageSize)
 			if err != nil {
 				t.Fatalf("Search() error = %v", err)
 			}
-			if got == nil {
-				t.Fatal("Search() = nil, want a non-nil slice")
+			if got.Notes == nil {
+				t.Fatal("Search() notes = nil, want a non-nil slice")
 			}
-			if gotIDs := ids(got); !slices.Equal(gotIDs, tt.wantIDs) {
-				t.Errorf("Search(%q) = %v, want %v", tt.query, gotIDs, tt.wantIDs)
+			if gotIDs := ids(got.Notes); !slices.Equal(gotIDs, tt.wantIDs) || got.Total != len(tt.wantIDs) {
+				t.Errorf("Search(%q) = %v (total %d), want %v (total %d)", tt.query, gotIDs, got.Total, tt.wantIDs, len(tt.wantIDs))
+			}
+		})
+	}
+}
+
+func TestServiceSearchPaging(t *testing.T) {
+	svc, repo := newTestService()
+	ctx := context.Background()
+	for i, id := range []string{"e", "d", "c", "b", "a"} { // "e" is the newest
+		mustCreate(t, repo, Note{ID: id, Title: "Note " + id, CreatedAt: fixedNow.Add(-time.Duration(i) * time.Hour)})
+	}
+
+	tests := []struct {
+		name          string
+		offset, limit int
+		wantIDs       []string
+	}{
+		{"first page", 0, 2, []string{"e", "d"}},
+		{"second page", 2, 2, []string{"c", "b"}},
+		{"last page is short", 4, 2, []string{"a"}},
+		{"offset at the end", 5, 2, []string{}},
+		{"offset past the end", 99, 2, []string{}},
+		{"limit larger than the matches", 0, MaxPageSize, []string{"e", "d", "c", "b", "a"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := svc.Search(ctx, "note", tt.offset, tt.limit)
+			if err != nil {
+				t.Fatalf("Search() error = %v", err)
+			}
+			if got.Notes == nil {
+				t.Fatal("Search() notes = nil, want a non-nil slice")
+			}
+			if gotIDs := ids(got.Notes); !slices.Equal(gotIDs, tt.wantIDs) {
+				t.Errorf("ids = %v, want %v", gotIDs, tt.wantIDs)
+			}
+			if got.Total != 5 {
+				t.Errorf("total = %d, want 5 (every match, before paging)", got.Total)
+			}
+		})
+	}
+}
+
+func TestServiceSearchPagingValidation(t *testing.T) {
+	tests := []struct {
+		name          string
+		offset, limit int
+		wantFields    []string
+		wantInMsg     string
+	}{
+		{"negative offset", -1, 2, []string{"offset"}, "0 or more"},
+		{"zero limit", 0, 0, []string{"limit"}, "from 1 to 50"},
+		{"negative limit", 0, -5, []string{"limit"}, "from 1 to 50"},
+		{"limit over the maximum", 0, MaxPageSize + 1, []string{"limit"}, "(got 51)"},
+		{"both invalid at once", -1, 0, []string{"limit", "offset"}, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newTestService()
+
+			_, err := svc.Search(context.Background(), "", tt.offset, tt.limit)
+
+			var verr *ValidationError
+			if !errors.As(err, &verr) {
+				t.Fatalf("Search() error = %v, want a *ValidationError", err)
+			}
+			if got := slices.Sorted(maps.Keys(verr.Fields)); !slices.Equal(got, tt.wantFields) {
+				t.Errorf("invalid fields = %v, want %v", got, tt.wantFields)
+			}
+			if msg := verr.Fields[tt.wantFields[0]]; !strings.Contains(msg, tt.wantInMsg) {
+				t.Errorf("message = %q, want it to contain %q", msg, tt.wantInMsg)
 			}
 		})
 	}
@@ -298,7 +371,8 @@ func TestSeed(t *testing.T) {
 		t.Fatalf("Seed() error = %v", err)
 	}
 
-	got, _ := repo.Search(ctx, nil)
+	page, _ := repo.Search(ctx, nil, 0, MaxPageSize)
+	got := page.Notes
 	if len(got) != len(seedNotes) {
 		t.Fatalf("seeded %d notes, want %d", len(got), len(seedNotes))
 	}

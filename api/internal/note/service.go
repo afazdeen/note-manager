@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -13,15 +14,31 @@ import (
 // ErrNotFound is returned when no note has the given id.
 var ErrNotFound = errors.New("note not found")
 
+// Page sizes for Search. DefaultPageSize is the web app's page size and the
+// REST default; MaxPageSize caps every caller.
+const (
+	DefaultPageSize = 2
+	MaxPageSize     = 50
+)
+
+// Page is one page of search results.
+type Page struct {
+	Notes []Note // never nil
+	Total int    // how many notes matched before paging
+}
+
 // Repository stores notes. Implementations must be safe for concurrent use
 // and must not share slices with callers.
 type Repository interface {
 	Create(ctx context.Context, n Note) error
 	Get(ctx context.Context, id string) (Note, error)
-	// Search returns the notes in which every term appears in the title, the
-	// body or a tag, ignoring case. No terms matches every note. Results are
-	// newest first, with ties broken by id, and the slice is never nil.
-	Search(ctx context.Context, terms []string) ([]Note, error)
+	// Search returns one page of the notes in which every term appears in the
+	// title, the body or a tag, ignoring case. No terms matches every note.
+	// Matches are ordered newest first, with ties broken by id, then the first
+	// offset are skipped and at most limit are returned, like SQL's
+	// LIMIT/OFFSET. Total counts every match. An offset at or past the end
+	// gives no notes. The Service ensures offset >= 0 and limit >= 1.
+	Search(ctx context.Context, terms []string, offset, limit int) (Page, error)
 	// Delete removes the note and returns it as it was.
 	Delete(ctx context.Context, id string) (Note, error)
 }
@@ -68,14 +85,27 @@ func (s *Service) Get(ctx context.Context, id string) (Note, error) {
 	return s.repo.Get(ctx, strings.TrimSpace(id))
 }
 
-// Search splits query on whitespace and returns the notes that contain every
-// term (ignoring case) in the title, the body or a tag, newest first. An empty
-// query returns every note. Repeated terms are passed to the repository once,
-// so a query like "a a a ..." costs no more than "a".
-func (s *Service) Search(ctx context.Context, query string) ([]Note, error) {
+// Search splits query on whitespace and returns one page of the notes that
+// contain every term (ignoring case) in the title, the body or a tag, newest
+// first. An empty query matches every note. offset must be 0 or more and
+// limit from 1 to MaxPageSize; otherwise it returns a *ValidationError.
+// Repeated terms are passed to the repository once, so a query like
+// "a a a ..." costs no more than "a".
+func (s *Service) Search(ctx context.Context, query string, offset, limit int) (Page, error) {
+	fields := map[string]string{}
+	if offset < 0 {
+		fields["offset"] = fmt.Sprintf("must be 0 or more (got %d)", offset)
+	}
+	if limit < 1 || limit > MaxPageSize {
+		fields["limit"] = fmt.Sprintf("must be from 1 to %d (got %d)", MaxPageSize, limit)
+	}
+	if len(fields) > 0 {
+		return Page{}, &ValidationError{Fields: fields}
+	}
+
 	terms := strings.Fields(strings.ToLower(query))
 	slices.Sort(terms)
-	return s.repo.Search(ctx, slices.Compact(terms))
+	return s.repo.Search(ctx, slices.Compact(terms), offset, limit)
 }
 
 // Delete removes the note with the given id and returns it, or ErrNotFound.

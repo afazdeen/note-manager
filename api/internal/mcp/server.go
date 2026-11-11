@@ -21,7 +21,7 @@ const maxRequestBytes = 256 << 10
 // NoteService is what the tools need from the note service.
 type NoteService interface {
 	Create(ctx context.Context, in note.CreateInput) (note.Note, error)
-	Search(ctx context.Context, query string) ([]note.Note, error)
+	Search(ctx context.Context, query string, offset, limit int) (note.Page, error)
 	Delete(ctx context.Context, id string) (note.Note, error)
 }
 

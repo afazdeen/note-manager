@@ -190,7 +190,7 @@ func TestListTools(t *testing.T) {
 		wantInputs      []string
 		wantOutputs     []string
 	}{
-		{"search_notes", true, false, []string{"limit", "search"}, []string{"notes", "total"}},
+		{"search_notes", true, false, []string{"limit", "offset", "search"}, []string{"notes", "total"}},
 		{"create_note", false, false, []string{"body", "tags", "title"}, []string{"body", "createdAt", "id", "tags", "title"}},
 		{"delete_note", false, true, []string{"confirm", "id"}, []string{"deleted", "title"}},
 	}
@@ -209,8 +209,8 @@ func TestListTools(t *testing.T) {
 	}
 }
 
-// The limit's range and default are in the schema, so clients can check them
-// before calling, and the default applies when limit is left out.
+// The ranges and defaults of limit and offset are in the schema, so clients
+// can check them before calling, and the defaults apply when they are left out.
 func TestSearchLimit(t *testing.T) {
 	session := connect(t, newService())
 
@@ -223,11 +223,13 @@ func TestSearchLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	type bounds struct {
+		Minimum, Maximum, Default *float64
+	}
 	var schema struct {
 		Properties struct {
-			Limit struct {
-				Minimum, Maximum, Default *float64
-			} `json:"limit"`
+			Limit  bounds `json:"limit"`
+			Offset bounds `json:"offset"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal(raw, &schema); err != nil {
@@ -235,6 +237,9 @@ func TestSearchLimit(t *testing.T) {
 	}
 	if l := schema.Properties.Limit; l.Minimum == nil || *l.Minimum != 1 || l.Maximum == nil || *l.Maximum != 50 || l.Default == nil || *l.Default != 10 {
 		t.Errorf("limit schema = %s, want minimum 1, maximum 50 and default 10", raw)
+	}
+	if o := schema.Properties.Offset; o.Minimum == nil || *o.Minimum != 0 || o.Maximum != nil || o.Default == nil || *o.Default != 0 {
+		t.Errorf("offset schema = %s, want minimum 0, no maximum and default 0", raw)
 	}
 
 	for i := range 12 {
@@ -248,6 +253,55 @@ func TestSearchLimit(t *testing.T) {
 	if len(out.Notes) != 12 {
 		t.Errorf("with limit 50: %d notes, want 12", len(out.Notes))
 	}
+}
+
+// An agent following the tool description (next offset = offset + notes
+// returned, while less than total) gets every match once, in order.
+func TestSearchPaging(t *testing.T) {
+	session := connect(t, newService())
+	for i := range 5 {
+		call(t, session, "create_note", map[string]any{"title": fmt.Sprintf("Paged note %d", i)})
+	}
+	call(t, session, "create_note", map[string]any{"title": "Not a match"})
+
+	all := structured[searchOutput](t, call(t, session, "search_notes", map[string]any{"search": "paged", "limit": 50}))
+	if all.Total != 5 || len(all.Notes) != 5 {
+		t.Fatalf("one big page: total=%d, %d notes; want 5 and 5", all.Total, len(all.Notes))
+	}
+
+	var paged []noteResult
+	for offset := 0; ; {
+		out := structured[searchOutput](t, call(t, session, "search_notes",
+			map[string]any{"search": "paged", "offset": offset, "limit": 2}))
+		if out.Total != 5 {
+			t.Fatalf("offset %d: total = %d, want 5 on every page", offset, out.Total)
+		}
+		if len(out.Notes) > 2 {
+			t.Fatalf("offset %d: %d notes, want at most the limit of 2", offset, len(out.Notes))
+		}
+		paged = append(paged, out.Notes...)
+		offset += len(out.Notes)
+		if len(out.Notes) == 0 || offset >= out.Total {
+			break
+		}
+	}
+
+	if got, want := resultIDs(paged), resultIDs(all.Notes); !slices.Equal(got, want) {
+		t.Errorf("paged ids = %v, want %v (the same notes in the same order)", got, want)
+	}
+
+	past := structured[searchOutput](t, call(t, session, "search_notes", map[string]any{"offset": 100}))
+	if past.Total != 6 || past.Notes == nil || len(past.Notes) != 0 {
+		t.Errorf("offset past the end: total=%d, notes=%v; want total 6 and an empty array", past.Total, past.Notes)
+	}
+}
+
+func resultIDs(notes []noteResult) []string {
+	ids := make([]string, len(notes))
+	for i, n := range notes {
+		ids[i] = n.ID
+	}
+	return ids
 }
 
 func TestCreateThenSearch(t *testing.T) {
@@ -325,6 +379,7 @@ func TestToolErrors(t *testing.T) {
 		{"search limit too high", "search_notes", map[string]any{"limit": 51}, "limit: maximum"},
 		{"search limit zero", "search_notes", map[string]any{"limit": 0}, "limit: minimum"},
 		{"search limit negative", "search_notes", map[string]any{"limit": -1}, "limit: minimum"},
+		{"search offset negative", "search_notes", map[string]any{"offset": -1}, "offset: minimum"},
 		{"missing required title", "create_note", map[string]any{}, "title"},
 		{"wrong argument type", "create_note", map[string]any{"title": 42}, "title"},
 	}
@@ -359,9 +414,33 @@ var errSecret = errors.New("sqlite: database is locked at /var/data/notes.db")
 func (failingService) Create(context.Context, note.CreateInput) (note.Note, error) {
 	return note.Note{}, errSecret
 }
-func (failingService) Search(context.Context, string) ([]note.Note, error) { return nil, errSecret }
+func (failingService) Search(context.Context, string, int, int) (note.Page, error) {
+	return note.Page{}, errSecret
+}
 func (failingService) Delete(context.Context, string) (note.Note, error) {
 	return note.Note{}, errSecret
+}
+
+// rejectingSearchService refuses the search arguments, as the service would
+// for an offset or limit out of range.
+type rejectingSearchService struct{ failingService }
+
+func (rejectingSearchService) Search(context.Context, string, int, int) (note.Page, error) {
+	return note.Page{}, &note.ValidationError{Fields: map[string]string{"offset": "must be 0 or more (got -1)"}}
+}
+
+// The schema stops bad paging values before the tool runs, but if the service
+// refuses them anyway, the agent is told the search didn't run, not that a
+// note wasn't saved.
+func TestSearchValidationError(t *testing.T) {
+	session := connect(t, rejectingSearchService{})
+
+	res := call(t, session, "search_notes", map[string]any{})
+
+	want := "the search was not run because some fields are invalid: offset must be 0 or more (got -1)"
+	if got := text(res); !res.IsError || !strings.Contains(got, want) {
+		t.Errorf("IsError = %v, text = %q; want a tool error containing %q", res.IsError, got, want)
+	}
 }
 
 func TestUnexpectedErrorsDoNotLeakDetails(t *testing.T) {

@@ -3,9 +3,11 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"note-manager/api/internal/note"
 )
@@ -14,7 +16,7 @@ import (
 type NoteService interface {
 	Create(ctx context.Context, in note.CreateInput) (note.Note, error)
 	Get(ctx context.Context, id string) (note.Note, error)
-	Search(ctx context.Context, query string) ([]note.Note, error)
+	Search(ctx context.Context, query string, offset, limit int) (note.Page, error)
 	Delete(ctx context.Context, id string) (note.Note, error)
 }
 
@@ -55,19 +57,50 @@ func (h *handler) health(w http.ResponseWriter, _ *http.Request) {
 
 type listResponse struct {
 	Notes []note.Note `json:"notes"`
+	Total int         `json:"total"`
 }
 
-// listNotes handles GET /api/notes?search=<text>. No search text lists every note.
+// listNotes handles GET /api/notes?search=<text>&offset=<n>&limit=<n> and
+// returns one page. No search text matches every note. offset defaults to 0
+// and limit to note.DefaultPageSize. Values that aren't integers get a 400;
+// the service checks the ranges (422).
 func (h *handler) listNotes(w http.ResponseWriter, r *http.Request) {
-	notes, err := h.notes.Search(r.Context(), r.URL.Query().Get("search"))
+	query := r.URL.Query()
+	offset, reqErr := intParam(query, "offset", 0)
+	if reqErr != nil {
+		reqErr.write(w)
+		return
+	}
+	limit, reqErr := intParam(query, "limit", note.DefaultPageSize)
+	if reqErr != nil {
+		reqErr.write(w)
+		return
+	}
+
+	page, err := h.notes.Search(r.Context(), query.Get("search"), offset, limit)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
 	}
+	notes := page.Notes
 	if notes == nil {
 		notes = []note.Note{} // always send [] rather than null
 	}
-	writeJSON(w, http.StatusOK, listResponse{Notes: notes})
+	writeJSON(w, http.StatusOK, listResponse{Notes: notes, Total: page.Total})
+}
+
+// intParam reads an optional integer query parameter. A missing or empty
+// value gives def.
+func intParam(query url.Values, name string, def int) (int, *requestError) {
+	raw := query.Get(name)
+	if raw == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, badRequest(fmt.Sprintf("Query parameter %q must be an integer.", name))
+	}
+	return n, nil
 }
 
 func (h *handler) getNote(w http.ResponseWriter, r *http.Request) {

@@ -6,8 +6,8 @@ A small notes app that people (React UI) and AI agents (MCP) both use. One Go se
 
 | #  | Requirement | Delivered by |
 |----|-------------|--------------|
-| R1 | Backend API: create, list, search, delete. Notes in memory. A few meaningful tests | `api/`: Go standard library, `note` package (note / service / memory repository), `httptest` tests |
-| R2 | React + TypeScript UI: list and detail views, loading/empty/error states, keyboard friendly | `web/`: Vite, TanStack Query, Tailwind |
+| R1 | Backend API: create, list (offset paginated), search, delete. Notes in memory. A few meaningful tests | `api/`: Go standard library, `note` package (note / service / memory repository), `httptest` tests |
+| R2 | React + TypeScript UI: list and detail views, loading/empty/error states, keyboard friendly. The list is virtualized and scrolls infinitely in pages of 2 | `web/`: Vite, TanStack Query, TanStack Virtual, Tailwind |
 | R3 | One Web Component used inside React | `<tag-input>` tag picker, used in the create form and in the note detail |
 | R4 | MCP server with at least 2 tools, plus a note on auth and destructive actions | `/mcp` on the same server: `search_notes`, `create_note`, `delete_note`, plus `api/internal/mcp/note.md` |
 | R5 | README: setup, decisions, next steps, AI usage | `README.md` at the root: setup, using MCP, checks, key decisions, what I'd do with more time, how I used AI tools |
@@ -27,7 +27,7 @@ A small notes app that people (React UI) and AI agents (MCP) both use. One Go se
  └────────────────────────────────────────────────────────────┘
 ```
 
-- The service validates and normalises input, sets `id` and `createdAt`, and turns the search text into lowercase terms. The repository interface is defined in `service.go` (`Create`, `Get`, `Search(terms)`, `Delete`). The repository does the matching and the newest-first ordering, the way SQL would, so a SQLite repository could replace the in-memory one without other changes. The in-memory repository copies notes on the way in and out, so callers can't change stored data.
+- The service validates and normalises input, sets `id` and `createdAt`, and turns the search text into lowercase terms. The repository interface is defined in `service.go` (`Create`, `Get`, `Search(terms, offset, limit)` returning a `Page{Notes, Total}`, `Delete`). The repository does the matching, the newest-first ordering and the paging, the way SQL would (`ORDER BY … LIMIT … OFFSET …` plus a `COUNT(*)`), so a SQLite repository could replace the in-memory one without other changes. The in-memory repository copies notes on the way in and out, so callers can't change stored data.
 - On start, the server seeds 5 notes with different tags and timestamps (can be switched off with `SEED_NOTES=false`).
 - Agents can change notes too. The UI refetches when the window regains focus and every 15 s, so those changes show up.
 
@@ -54,13 +54,20 @@ Notes can't be edited, so there is no `updatedAt`.
 
 All failing fields are returned together, one message per field.
 
-**Search**: the `search` text (the same parameter name in REST and MCP) is trimmed, split on whitespace and de-duplicated. A note matches when *every* term appears, case-insensitively, in the title, the body or any tag. An empty or missing `search` returns all notes. Results are always newest first (`createdAt` descending, ties broken by `id`).
+**Search**: the `search` text (the same parameter name in REST and MCP) is trimmed, split on whitespace and de-duplicated. A note matches when *every* term appears, case-insensitively, in the title, the body or any tag. An empty or missing `search` matches all notes. Results are always newest first (`createdAt` descending, ties broken by `id`).
+
+**Pagination** (offset based, the same in REST and MCP):
+- **`offset`:** the number of matching notes to skip. An integer ≥ 0, default 0.
+- **`limit`:** the page size. An integer from 1 to 50 (`MaxPageSize`). REST defaults to 2 (`DefaultPageSize`, the web app's page size). MCP `search_notes` keeps its own default of 10.
+- **The result:** `{notes, total}`. `total` is how many notes match before paging. An offset at or past the end returns `notes: []` with the real `total`.
+- **Validation:** the service checks the ranges and returns field messages for `offset` and `limit`, like any other validation error.
+- **Drift:** offsets can shift when notes are created or deleted between page loads (for example by an agent), so a note can appear on two pages or be skipped. The UI removes duplicates by id, and its regular refetch reloads every loaded page from offset 0, which corrects the list. Cursor (keyset) pagination would prevent drift, and it's out of scope.
 
 ## 4. REST API (`/api`)
 
 | Method & path | Success | Errors |
 |---------------|---------|--------|
-| `GET /api/notes?search=<text>` | `200 {"notes": Note[]}` | – |
+| `GET /api/notes?search=<text>&offset=<n>&limit=<n>` | `200 {"notes": Note[], "total": number}` (one page; see Pagination in section 3) | 400, 422 |
 | `GET /api/notes/{id}` | `200 Note` | 404 |
 | `POST /api/notes` body `{title, body?, tags?}` | `201 Note` + `Location` | 400, 413, 415, 422 |
 | `DELETE /api/notes/{id}` | `204` | 404 |
@@ -72,12 +79,12 @@ Every error uses one shape (`fields` appears only for 422):
              "fields": { "title": "is required", "tags": "\"bad tag!\" is not a valid tag (...)" } } }
 ```
 Codes:
-- `bad_request` (400): malformed JSON, unknown fields, wrong types, an empty body, or more than one object.
+- `bad_request` (400): malformed JSON, unknown fields, wrong types, an empty body, or more than one object. Also an `offset` or `limit` query value that isn't an integer.
 - `not_found` (404): unknown note ids and unknown routes, including routes outside `/api`.
 - `method_not_allowed` (405): a known path with the wrong method, plus an `Allow` header.
 - `payload_too_large` (413): a body over 64 KB.
 - `unsupported_media_type` (415): `POST` without `Content-Type: application/json`. This forces browsers to send a preflight, so another site can't create notes with a plain form post.
-- `validation_failed` (422).
+- `validation_failed` (422): invalid note fields, or an `offset`/`limit` out of range (`fields.offset`, `fields.limit`).
 - `internal` (500): a generic message. The real cause is only logged. Panics are recovered, logged with a stack trace, and answered with this error.
 
 Routing uses Go 1.22+ `http.ServeMux` method patterns. Handlers depend on a small `NoteService` interface, and every request is logged with its method, path, status and duration.
@@ -91,15 +98,17 @@ The server uses the official Go SDK (`github.com/modelcontextprotocol/go-sdk` v1
 
 | Tool | Input | Output | Annotations |
 |------|-------|--------|-------------|
-| `search_notes` | `search?` string (empty = most recent), `limit?` int (1–50, default 10) | `{notes, total}` | `readOnlyHint: true` |
+| `search_notes` | `search?` string (empty = most recent), `offset?` int (≥ 0, default 0), `limit?` int (1–50, default 10) | `{notes, total}` | `readOnlyHint: true` |
 | `create_note` | `title`, `body?`, `tags?` | created note | `readOnlyHint: false`, `destructiveHint: false` |
 | `delete_note` | `id`, `confirm` bool | `{deleted: id, title}` | `destructiveHint: true`, `idempotentHint: true` |
+
+`search_notes` pages with the same service call as REST. The tool doesn't slice results itself. Its description tells agents to pass `offset` (the previous `offset` plus the number of notes returned) to get the next page while that is less than `total`.
 
 All three tools are `openWorldHint: false`. Errors come back as tool errors (`isError: true`) the agent can read and act on:
 - **Validation:** the same field messages as REST.
 - **Unknown id:** suggests running `search_notes`.
 - **Missing `confirm`:** tells the agent to check with the user first.
-- **Bad `limit`:** the input schema gives `limit` a `minimum` of 1, a `maximum` of 50 and a `default` of 10. The SDK applies the default and rejects other values before the tool runs, with an error naming the bound.
+- **Bad `limit` or `offset`:** the input schema gives `limit` a `minimum` of 1, a `maximum` of 50 and a `default` of 10, and gives `offset` a `minimum` of 0 and a `default` of 0. The SDK applies the defaults and rejects other values before the tool runs, with an error naming the bound.
 - **Unexpected errors:** logged, and a generic message is returned.
 
 **`api/internal/mcp/note.md`** covers what protects `/mcp` today (including the DNS-rebinding gap inside Docker), authentication (OAuth 2.1 following the 2026-07-28 MCP auth spec: Client ID Metadata Documents, `notes:read` / `notes:write` / `notes:delete` scopes, step-up authorization for deletes) and safer deletes (treating notes as untrusted input, soft delete with undo, elicitation, agents deleting only their own notes, a confirmation tied to one note, a switch to turn deletes off, rate limits, audit log).
@@ -124,6 +133,12 @@ All three tools are `openWorldHint: false`. Errors come back as tool errors (`is
 
 Each list row shows the title, a 2-line body preview, tag chips, a relative date ("3 h ago") and a delete icon button. Screen readers hear the title as the row's name, then the date and tags. The button is labelled "Delete note <title>" and turns red on hover or focus. It sits beside the row's button, not inside it, because buttons can't nest. The list is one Tab stop (the last-focused row, then the selected row, then the first), followed by that row's delete button. The detail view shows the open note in a card with rounded corners (`purple-50` background, `purple-100` border). Its loading skeleton uses the same card shape. The card holds the title, the full date, the body (whitespace kept), a read-only `<tag-input>` (clicking a tag searches for it) and a **Delete** button. The button is gray and only turns red on hover or keyboard focus.
 
+**Virtual list and paging.** The note list is a virtual list built with `@tanstack/react-virtual` (`useVirtualizer`). Only the rows in view, plus a few above and below (overscan 4), are in the DOM.
+- **Scrolling:** `NoteList` owns the list pane's scroll container and gives it to the virtualizer. Rows vary in height (the body preview and tags are optional), so each is measured with `measureElement` after a starting estimate of about 96 px. Rows are placed with `translateY` inside a `<ul>` as tall as all loaded rows.
+- **Infinite scroll:** notes load in pages of 2 (`PAGE_SIZE`). When the last rendered row is within one row of the end of the loaded notes and there is another page, the list calls `fetchNextPage()`. A short first page doesn't fill the pane, so pages keep loading until it is full, then load as you scroll.
+- **Rows that stay mounted:** a custom `rangeExtractor` always renders the list's Tab-stop row and the selected row, even when they're scrolled out of view. So focus is never lost when the focused row scrolls away, Tab can always reach the list, and the focus moves after a delete or the mobile **Back** button still find their row. On mobile, **Back** also scrolls the selected row into view (`scrollToIndex`).
+- **Screen readers:** each row's `<li>` has `aria-setsize` (the server's `total`) and `aria-posinset`, so a row is read as "3 of 9" even though most rows aren't in the DOM. The polite live region announces `total` ("9 notes"), not the number loaded so far.
+
 **Create dialog.** **New note**, the `n` key, or **Create your first note** (in the empty state) opens a native `<dialog>` with `showModal()`. The browser makes the page behind it inert and keeps Tab inside, so no focus-trap code is needed. It holds a title, a body textarea and an editable `<tag-input>`.
 - **Focus:** goes to the title when the dialog opens, and back to **New note** when it closes.
 - **Keys:** Enter in the title moves to the body. Ctrl/⌘+Enter saves. Esc cancels, except while saving.
@@ -137,6 +152,7 @@ Each list row shows the title, a 2-line body preview, tag chips, a relative date
 | Area | Loading | Empty | Error |
 |------|---------|-------|-------|
 | List | 4 skeleton rows; `aria-busy` | No notes: "No notes yet" + **Create your first note**. No matches: "No notes match "x"" + **Clear search** | Inline red banner + **Retry** |
+| List, next page | A skeleton row at the end of the list while the next page loads | – (no next page: the list just ends) | A row at the end: "Couldn't load more notes" + **Retry** (fetches that page again). Loaded notes stay usable |
 | Detail | Skeleton block | Nothing selected: "Select a note" | 404: "Note not found" (it may have been deleted, for example by an agent) + **Back to notes**. Other errors: banner + **Retry** |
 | Create | Save button disabled and reads "Saving…". Cancel and Esc are disabled too | – | Field errors under each input (client-side and from a 422). Other errors: alert at the top of the form; input is kept |
 | Delete | None: the note leaves the list at once (optimistic), and if it was open the next note is selected | – | The note comes back (and is re-selected if you haven't moved on), plus an error toast. A 404 isn't an error: the note was already gone (for example, an agent deleted it), so it counts as deleted |
@@ -148,8 +164,9 @@ Successful create or delete shows a toast (an `aria-live="polite"` region). Afte
 - **Response checks:** responses are checked, not cast. A note, a list or an error body in the wrong shape becomes `invalid_response`. An error code the app doesn't know also becomes `invalid_response`, keeping the server's message, and field messages that aren't strings are dropped.
 - **Retries:** queries retry once on network and 5xx errors, and never on 4xx.
 - **Search:** search text is trimmed, its whitespace collapsed and lowercased before it's used as the query key. Lists and the open note refetch every 15 s.
+- **Paging:** `useNotesSearch` is a `useInfiniteQuery` keyed by the search, one page per `offset` (`initialPageParam: 0`, `limit` = `PAGE_SIZE` = 2). The next offset is the last offset plus the notes it returned, while that is less than `total` and the page wasn't empty. `select` flattens the pages into one `Note[]`, removes duplicates by id (offset drift, see section 3) and hides notes whose delete is pending. `total` comes from the first page. A refetch (the 15 s interval, window focus, or after a create or delete) reloads every loaded page in order from offset 0. The client checks that `total` is a non-negative integer.
 - **Create:** refetches all lists (without waiting, so the dialog closes at once), so the new note shows up in the right place for every search.
-- **Delete:** the mutation has a key, and lists leave out every note whose delete is still running. So the note disappears at once, a refetch during the delete (the 15 s interval, window focus, or another delete) can't bring it back, and if the request fails it simply reappears, with an error toast. On success it is removed from every cached list.
+- **Delete:** the mutation has a key, and lists leave out every note whose delete is still running. So the note disappears at once, a refetch during the delete (the 15 s interval, window focus, or another delete) can't bring it back, and if the request fails it simply reappears, with an error toast. On success it is removed from every page of every cached list, and each list's `total` drops by one. The open note's placeholder (from a loaded list) is looked up across all pages too.
 
 **Toasts:** no library. Success toasts last 4 s and errors 8 s. The timer pauses while the pointer is over a toast or focus is inside it. At most 3 show at once, and each has a dismiss button. Success uses `role="status"` and errors `role="alert"`.
 
@@ -159,7 +176,8 @@ Successful create or delete shows a toast (an `aria-live="polite"` region). Afte
 |-----|--------|
 | `/` | Focus search |
 | `n` | New note (either case, so it works with Caps Lock or Shift) |
-| `↑` / `↓` | Move through the list (focus moves between rows) |
+| `↑` / `↓` | Move through the list (focus moves between rows). Moving works by index in the loaded notes, not by rows in the DOM: the list scrolls the target row into view (`scrollToIndex`) and focuses it on the next frame |
+| `Home` / `End` | First / last loaded row (reaching the end loads the next page) |
 | `Enter` | Open the focused note |
 | `Delete` (or `Backspace`, labelled "delete" on Mac) | Delete the note of the focused list row (its row or its delete button), otherwise the open note (opens the confirm dialog) |
 | `Ctrl/⌘ + Enter` | Submit the create form |
@@ -229,8 +247,8 @@ api/
 web/
   src/config/env.ts               the only reader of import.meta.env (typed, validated)
   src/lib/                        queryClient.ts  format.ts (relative and full dates)  validateNote.ts (same rules as the API)
-  src/api/                        client.ts  notes.ts (query hooks)  types.ts
-  src/components/                 NoteList  NoteDetail  CreateNoteForm (CreateNoteDialog)  Dialog (native <dialog>)  SearchBar  ConfirmDialog  EmptyState  ErrorState  Skeleton  TagChips  icons  buttonStyles.ts
+  src/api/                        client.ts  notes.ts (query hooks; the list is a paged useInfiniteQuery)  types.ts
+  src/components/                 NoteList (virtual list, @tanstack/react-virtual; owns the list's scroll container)  NoteDetail  CreateNoteForm (CreateNoteDialog)  Dialog (native <dialog>)  SearchBar  ConfirmDialog  EmptyState  ErrorState  Skeleton  TagChips  icons  buttonStyles.ts
   src/components/toast/           ToastProvider.tsx  toast-context.ts (useToast)
   src/web-components/tag-input/   tag-input.ts  tag-rules.ts  TagInput.tsx  tag-input-jsx.d.ts  *.test.ts(x)
   src/hooks/                      useShortcuts  useNoteParam (?note=)  useDebouncedValue  useMediaQuery
@@ -245,11 +263,11 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 
 ## 11. Test plan
 
-- **Go service**: a table test for validation (missing title, too long, bad tag, tag lowercasing and de-duplication). Search tests for case-insensitivity across title, body and tags, multi-term AND matching, and newest-first order. Delete of an unknown id returns not found.
-- **Go HTTP** (`httptest`): POST 201 and 422 with the error shape, GET with `search`, DELETE 204 and 404, CORS preflight from the allowed origin vs another origin.
-- **Go MCP** (in-memory transport and SDK client): `create_note` then `search_notes` finds the note. `delete_note` without `confirm` is refused.
+- **Go service**: a table test for validation (missing title, too long, bad tag, tag lowercasing and de-duplication). Search tests for case-insensitivity across title, body and tags, multi-term AND matching, and newest-first order. Delete of an unknown id returns not found. Paging: `offset`/`limit` return the right slice in order, `total` counts every match, an offset past the end returns `[]` with the real `total`, and a table test rejects `offset < 0`, `limit < 1` and `limit > 50` with field messages.
+- **Go HTTP** (`httptest`): POST 201 and 422 with the error shape, GET with `search`, DELETE 204 and 404, CORS preflight from the allowed origin vs another origin. GET `/api/notes` with no paging params returns the first 2 notes and `total`. `offset`/`limit` return the next page. `limit=abc` gives 400 and `limit=0` gives 422 with `fields.limit`.
+- **Go MCP** (in-memory transport and SDK client): `create_note` then `search_notes` finds the note. `delete_note` without `confirm` is refused. `search_notes` with `offset` returns the next notes and the same `total`.
 - **Go wiring** (`cmd/server`, real loopback listener): `/api` has CORS and `/mcp` doesn't, `/mcp` refuses other sites and DNS rebinding, unknown routes get the JSON 404, and every request is logged.
-- **Web** (Vitest, Testing Library, MSW): list loading, empty, error and retry. The create flow, including a server 422 (tags errors linked to the tag input). Deleting from a list row through the confirm dialog, the `Delete` and `Backspace` keys, a 404 counting as deleted, and the history after a delete. Delete cache cases: a refetch during a pending delete, and one failing delete next to a successful one. API response checks. Toast pausing. `<tag-input>` add, normalise, Backspace removal, events and the `error` attribute. The `/` and `n` shortcuts. Phone-width behaviour (focus on open, Back, tag click, delete) with a `matchMedia` stub (`src/test/viewport.ts`), since jsdom has none.
+- **Web** (Vitest, Testing Library, MSW): list loading, empty, error and retry. The create flow, including a server 422 (tags errors linked to the tag input). Deleting from a list row through the confirm dialog, the `Delete` and `Backspace` keys, a 404 counting as deleted, and the history after a delete. Delete cache cases: a refetch during a pending delete, and one failing delete next to a successful one. API response checks. Toast pausing. `<tag-input>` add, normalise, Backspace removal, events and the `error` attribute. The `/` and `n` shortcuts. Phone-width behaviour (focus on open, Back, tag click, delete) with a `matchMedia` stub (`src/test/viewport.ts`), since jsdom has none. Paging and the virtual list: the MSW handler applies `offset`/`limit` and returns `total`, with enough seed notes for several pages. Tests cover the first page rendering and then the next one loading; a failed next page showing **Retry**, which works; `↓` past the rendered rows moving focus to a row that wasn't mounted before; a delete removing the note from its page; and a note returned on two pages showing once. jsdom has no layout, so `src/test/setup.ts` stubs `ResizeObserver` and gives the scroll container and rows a fixed size, so the virtualizer renders rows.
 
 ## 12. Build order (~3 h)
 
@@ -261,10 +279,11 @@ README.md  Implementation_Guide.md  CLAUDE.md  .gitignore
 6. `<tag-input>`, create form, delete flow (25 min)
 7. Keyboard shortcuts, responsive layout, accessibility pass, web tests (20 min)
 8. README (15 min)
+9. Pagination + virtual list (~40 min), in small steps: `note` repository and service paging + tests. REST and MCP `offset`/`limit` + tests. Web client, types, `useInfiniteQuery`, cache updates and MSW. Virtual `NoteList` (adds `@tanstack/react-virtual`), keyboard and accessibility, web tests
 
 ## 13. Out of scope
 
-Editing notes, users and authentication (described in `note.md` only), SQLite and other persistence, pagination, Markdown rendering, live push updates (the UI polls instead), a client-side router (only `?note=` is in the URL), dark mode, deployment (Docker images and Compose are for running locally; there's no registry, TLS or hosting setup), i18n.
+Editing notes, users and authentication (described in `note.md` only), SQLite and other persistence, cursor (keyset) pagination (offset pagination is used, see section 3), Markdown rendering, live push updates (the UI polls instead), a client-side router (only `?note=` is in the URL), dark mode, deployment (Docker images and Compose are for running locally; there's no registry, TLS or hosting setup), i18n.
 
 ## 14. Assumptions
 
@@ -272,3 +291,4 @@ Editing notes, users and authentication (described in `note.md` only), SQLite an
 - React 19, Tailwind v4, Go 1.22+ (1.27 installed). The selected note is kept in the URL (`?note=<id>`); the search text is not.
 - `delete_note` needs `confirm: true` as an extra safeguard on top of the `destructiveHint` annotation.
 - You can delete from a list row, from the detail view, or with the `Delete` key. Every delete goes through the confirm dialog.
+- The list page size is 2, as requested. That is small on purpose, to show paging with the demo data. We accept that offset pages can drift when notes change between page loads: removing duplicates by id and the regular refetch keep the list correct. We also accept that the 15 s refetch reloads every loaded page (for example 10 small requests after scrolling through 20 notes).

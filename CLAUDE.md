@@ -9,7 +9,7 @@ A notes app for people (React UI in `web/`) and AI agents (MCP). Both use one Go
 ## Code
 - Use standard, idiomatic Go and React suited to a small project. Don't add layers or abstractions we don't need.
 - Go dependencies: standard library, the official MCP Go SDK (plus its `google/jsonschema-go`) and godotenv only. Ask before adding any package, Go or npm.
-- REST and MCP both call `note.Service`. Validation and rules live in the service; the repository stores, matches and orders notes.
+- REST and MCP both call `note.Service`. Validation and rules live in the service; the repository stores, matches, orders and pages notes.
 - TypeScript is in strict mode: no `any`, no `@ts-ignore`.
 
 ## UI

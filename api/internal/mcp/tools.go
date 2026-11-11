@@ -17,10 +17,11 @@ import (
 	"note-manager/api/internal/note"
 )
 
-// Limits for search_notes results.
+// Limits for search_notes results. The maximum is the service's, so the
+// schema and the service agree.
 const (
 	defaultSearchLimit = 10
-	maxSearchLimit     = 50
+	maxSearchLimit     = note.MaxPageSize
 )
 
 // noteResult is a note as tools return it. It mirrors note.Note, with
@@ -51,18 +52,23 @@ func toResult(n note.Note) noteResult {
 
 type searchInput struct {
 	Search string `json:"search,omitempty" jsonschema:"Words to look for in titles, bodies and tags. Every word must match and case is ignored. Leave empty to get the most recent notes."`
-	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of notes to return, from 1 to 50. Defaults to 10."`
+	Offset int    `json:"offset,omitempty" jsonschema:"How many matching notes to skip, for paging. 0 or more; defaults to 0. For the next page, pass the previous offset plus the number of notes returned, while that is less than total."`
+	Limit  int    `json:"limit,omitempty" jsonschema:"Maximum number of notes to return (the page size), from 1 to 50. Defaults to 10."`
 }
 
 type searchOutput struct {
-	Notes []noteResult `json:"notes" jsonschema:"Matching notes, newest first."`
-	Total int          `json:"total" jsonschema:"How many notes match in total. Can be more than the number returned when limit cuts the list short."`
+	Notes []noteResult `json:"notes" jsonschema:"This page of matching notes, newest first."`
+	Total int          `json:"total" jsonschema:"How many notes match in total, across all pages. When offset plus the number of notes returned is less than this, there are more pages."`
 }
 
-// searchInputSchema adds the limit's range and default to the inferred schema,
-// so clients can check it before calling. The SDK validates against it too.
+// searchInputSchema adds the ranges and defaults of offset and limit to the
+// inferred schema, so clients can check them before calling. The SDK
+// validates against it too.
 func searchInputSchema() *jsonschema.Schema {
 	s := schemaFor[searchInput]()
+	offset := s.Properties["offset"]
+	offset.Minimum = ptr(0.0)
+	offset.Default = json.RawMessage("0")
 	limit := s.Properties["limit"]
 	limit.Minimum = ptr(1.0)
 	limit.Maximum = ptr(float64(maxSearchLimit))
@@ -76,7 +82,9 @@ var searchTool = &sdk.Tool{
 	InputSchema:  searchInputSchema(),
 	OutputSchema: schemaFor[searchOutput](),
 	Description: "Search the team's shared notes. Returns notes whose title, body or tags contain every word of `search` " +
-		"(case-insensitive), newest first. Leave `search` empty to list the most recent notes. Read-only.",
+		"(case-insensitive), newest first. Leave `search` empty to list the most recent notes. " +
+		"Results come in pages of `limit` notes: to get the next page, call again with `offset` set to the previous " +
+		"offset plus the number of notes returned, while that is less than `total`. Read-only.",
 	Annotations: &sdk.ToolAnnotations{
 		Title:         "Search notes",
 		ReadOnlyHint:  true,
@@ -84,16 +92,16 @@ var searchTool = &sdk.Tool{
 	},
 }
 
-// search runs search_notes. The SDK has already checked limit against the
-// schema (1 to 50) and filled in the default when it was left out.
+// search runs search_notes. The SDK has already checked offset (0 or more)
+// and limit (1 to 50) against the schema and filled in the defaults when they
+// were left out. The service does the paging, like the REST API.
 func (t *tools) search(ctx context.Context, _ *sdk.CallToolRequest, in searchInput) (*sdk.CallToolResult, searchOutput, error) {
-	notes, err := t.notes.Search(ctx, in.Search)
+	page, err := t.notes.Search(ctx, in.Search, in.Offset, in.Limit)
 	if err != nil {
-		return nil, searchOutput{}, t.toolError(err)
+		return nil, searchOutput{}, t.toolError("the search was not run", err)
 	}
-	count := min(in.Limit, len(notes))
-	out := searchOutput{Notes: make([]noteResult, 0, count), Total: len(notes)}
-	for _, n := range notes[:count] {
+	out := searchOutput{Notes: make([]noteResult, 0, len(page.Notes)), Total: page.Total}
+	for _, n := range page.Notes {
 		out.Notes = append(out.Notes, toResult(n))
 	}
 	return nil, out, nil
@@ -126,7 +134,7 @@ var createTool = &sdk.Tool{
 func (t *tools) create(ctx context.Context, _ *sdk.CallToolRequest, in createInput) (*sdk.CallToolResult, noteResult, error) {
 	n, err := t.notes.Create(ctx, note.CreateInput{Title: in.Title, Body: in.Body, Tags: in.Tags})
 	if err != nil {
-		return nil, noteResult{}, t.toolError(err)
+		return nil, noteResult{}, t.toolError("the note was not saved", err)
 	}
 	return nil, toResult(n), nil
 }
@@ -166,7 +174,7 @@ func (t *tools) delete(ctx context.Context, _ *sdk.CallToolRequest, in deleteInp
 	}
 	n, err := t.notes.Delete(ctx, in.ID)
 	if err != nil {
-		return nil, deleteOutput{}, t.toolError(err)
+		return nil, deleteOutput{}, t.toolError("the note was not deleted", err)
 	}
 	t.logger.Info("note deleted via MCP", "id", n.ID, "title", n.Title)
 	return nil, deleteOutput{Deleted: n.ID, Title: n.Title}, nil
@@ -175,8 +183,10 @@ func (t *tools) delete(ctx context.Context, _ *sdk.CallToolRequest, in deleteInp
 // ---- errors ----
 
 // toolError turns a service error into a message the agent can act on.
-// Unexpected errors are logged and reported generically, without internals.
-func (t *tools) toolError(err error) error {
+// outcome says what didn't happen, e.g. "the note was not saved", for
+// validation errors. Unexpected errors are logged and reported generically,
+// without internals.
+func (t *tools) toolError(outcome string, err error) error {
 	var verr *note.ValidationError
 	switch {
 	case errors.As(err, &verr):
@@ -184,7 +194,7 @@ func (t *tools) toolError(err error) error {
 		for _, field := range slices.Sorted(maps.Keys(verr.Fields)) {
 			parts = append(parts, field+" "+verr.Fields[field])
 		}
-		return fmt.Errorf("the note was not saved because some fields are invalid: %s. Fix them and try again", strings.Join(parts, "; "))
+		return fmt.Errorf("%s because some fields are invalid: %s. Fix them and try again", outcome, strings.Join(parts, "; "))
 	case errors.Is(err, note.ErrNotFound):
 		return errors.New("no note has that id. It may already be deleted; use search_notes to find the right id")
 	default:

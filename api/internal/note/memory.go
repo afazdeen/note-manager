@@ -45,25 +45,33 @@ func (r *MemoryRepository) Get(_ context.Context, id string) (Note, error) {
 	return clone(n), nil
 }
 
-// Search returns the notes that contain every term, newest first. Terms are
-// expected in lowercase; the Service takes care of that.
-func (r *MemoryRepository) Search(_ context.Context, terms []string) ([]Note, error) {
+// Search returns one page of the notes that contain every term, newest first.
+// Terms are expected in lowercase, offset >= 0 and limit >= 1; the Service
+// takes care of that. Only the notes on the page are copied.
+func (r *MemoryRepository) Search(_ context.Context, terms []string, offset, limit int) (Page, error) {
 	r.mu.RLock()
-	results := make([]Note, 0, len(r.notes))
+	defer r.mu.RUnlock()
+
+	matched := make([]Note, 0, len(r.notes))
 	for _, n := range r.notes {
 		if matches(n, terms) {
-			results = append(results, clone(n))
+			matched = append(matched, n)
 		}
 	}
-	r.mu.RUnlock()
-
-	slices.SortFunc(results, func(a, b Note) int {
+	slices.SortFunc(matched, func(a, b Note) int {
 		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
 			return c
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
-	return results, nil
+
+	start := min(offset, len(matched))
+	end := start + min(limit, len(matched)-start)
+	page := Page{Notes: make([]Note, 0, end-start), Total: len(matched)}
+	for _, n := range matched[start:end] {
+		page.Notes = append(page.Notes, clone(n))
+	}
+	return page, nil
 }
 
 // Delete removes the note with the given id and returns it, or ErrNotFound.

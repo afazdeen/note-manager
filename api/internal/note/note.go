@@ -49,7 +49,7 @@ func (e *ValidationError) Error() string {
 	for _, field := range slices.Sorted(maps.Keys(e.Fields)) {
 		parts = append(parts, field+" "+e.Fields[field])
 	}
-	return "invalid note: " + strings.Join(parts, "; ")
+	return "invalid input: " + strings.Join(parts, "; ")
 }
 
 // Validate normalises the input and then checks it. Title and body are
