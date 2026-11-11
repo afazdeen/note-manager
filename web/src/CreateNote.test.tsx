@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { App } from './App'
-import { apiError, apiUrl } from './test/handlers'
+import { apiError, apiUrl, singlePage } from './test/handlers'
 import { renderWithClient } from './test/render'
 import { server } from './test/server'
 
@@ -260,7 +260,7 @@ describe('saving', () => {
   })
 
   it('opens from the "Create your first note" button when there are no notes', async () => {
-    server.use(http.get(apiUrl('/notes'), () => Response.json({ notes: [] })))
+    server.use(http.get(apiUrl('/notes'), () => singlePage([])))
     const user = userEvent.setup()
     renderWithClient(<App />)
 

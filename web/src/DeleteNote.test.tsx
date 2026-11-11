@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { http } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { App } from './App'
-import { apiError, apiUrl, db } from './test/handlers'
+import { apiError, apiUrl, db, singlePage } from './test/handlers'
 import { renderWithClient } from './test/render'
 import { server } from './test/server'
 import { setViewportWidth } from './test/viewport'
@@ -147,7 +147,7 @@ describe('deleting', () => {
 
   it('selects nothing when the only note is deleted', async () => {
     // The list only ever shows n3 (while it exists).
-    server.use(http.get(apiUrl('/notes'), () => Response.json({ notes: db.search('').filter((n) => n.id === 'n3') })))
+    server.use(http.get(apiUrl('/notes'), () => singlePage(db.search('').filter((n) => n.id === 'n3'))))
     const { user } = await renderApp('/?note=n3', 'Retro notes')
 
     await user.click(await within(detail()).findByRole('button', { name: 'Delete' }))

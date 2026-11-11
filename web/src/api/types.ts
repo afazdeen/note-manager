@@ -15,8 +15,12 @@ export interface CreateNoteInput {
   tags?: string[]
 }
 
-export interface NotesResponse {
+/** One page of GET /api/notes. */
+export interface NotesPage {
+  /** This page of matching notes, newest first. */
   notes: Note[]
+  /** How many notes match in total, across all pages. */
+  total: number
 }
 
 /** Codes the API sends in error.code. */

@@ -1,5 +1,5 @@
 import { env } from '../config/env'
-import { SERVER_ERROR_CODES, type ApiErrorCode, type CreateNoteInput, type Note, type NotesResponse, type ServerErrorCode } from './types'
+import { SERVER_ERROR_CODES, type ApiErrorCode, type CreateNoteInput, type Note, type NotesPage, type ServerErrorCode } from './types'
 
 /** Every failed API call rejects with an ApiError, so callers handle one type. */
 export class ApiError extends Error {
@@ -49,8 +49,15 @@ function isNote(value: unknown): value is Note {
   )
 }
 
-function isNotesResponse(value: unknown): value is NotesResponse {
-  return isRecord(value) && Array.isArray(value.notes) && value.notes.every(isNote)
+function isNotesPage(value: unknown): value is NotesPage {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.notes) &&
+    value.notes.every(isNote) &&
+    typeof value.total === 'number' &&
+    Number.isInteger(value.total) &&
+    value.total >= 0
+  )
 }
 
 const isServerErrorCode = (code: string): code is ServerErrorCode => SERVER_ERROR_CODES.some((known) => known === code)
@@ -109,10 +116,11 @@ async function request<T>(path: string, init: RequestInit, isExpected: (body: un
 const notePath = (id: string): string => `/notes/${encodeURIComponent(id)}`
 
 export const notesApi = {
-  async search(search: string, signal?: AbortSignal): Promise<Note[]> {
-    const query = search ? `?${new URLSearchParams({ search }).toString()}` : ''
-    const { notes } = await request(`/notes${query}`, { signal }, isNotesResponse)
-    return notes
+  /** One page of the notes matching `search` (all notes when empty), newest first. */
+  search(search: string, offset: number, limit: number, signal?: AbortSignal): Promise<NotesPage> {
+    const params = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+    if (search) params.set('search', search)
+    return request(`/notes?${params.toString()}`, { signal }, isNotesPage)
   },
 
   get(id: string, signal?: AbortSignal): Promise<Note> {

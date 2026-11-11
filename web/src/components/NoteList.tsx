@@ -1,6 +1,5 @@
-import type { UseQueryResult } from '@tanstack/react-query'
-import { useId, useRef, useState, type KeyboardEvent } from 'react'
-import type { ApiError } from '../api/client'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import type { NotesQuery } from '../api/notes'
 import type { Note } from '../api/types'
 import { formatRelativeDate } from '../lib/format'
 import { buttonStyles } from './buttonStyles'
@@ -11,7 +10,7 @@ import { Skeleton } from './Skeleton'
 import { TagChips } from './TagChips'
 
 interface NoteListProps {
-  query: UseQueryResult<Note[], ApiError>
+  query: NotesQuery
   /** The search the results are for, used in the "no results" message. */
   search: string
   selectedId: string | null
@@ -30,7 +29,17 @@ export function NoteList({
   onClearSearch,
   onCreateNote,
 }: Readonly<NoteListProps>) {
-  const { data: notes, isPending, isError, error, refetch, isFetching, isPlaceholderData } = query
+  const { data, isPending, isError, error, refetch, isFetching, isPlaceholderData } = query
+  const { hasNextPage, isFetchNextPageError, fetchNextPage } = query
+  const notes = data?.notes
+
+  // TEMPORARY until the virtual list (build step 9) loads pages as you scroll:
+  // load the remaining pages one after another, so the whole list shows.
+  // Waits while anything is fetching, because fetchNextPage would cancel a
+  // running refetch, and stops after a failed page (Retry refetches).
+  useEffect(() => {
+    if (hasNextPage && !isFetching && !isFetchNextPageError) void fetchNextPage()
+  }, [hasNextPage, isFetching, isFetchNextPageError, fetchNextPage])
 
   if (isPending) {
     return <NoteListSkeleton />
@@ -77,9 +86,9 @@ export function NoteList({
           stale={isPlaceholderData}
         />
       )}
-      {notes && (
+      {data && (
         <p aria-live="polite" className="sr-only">
-          {notes.length === 1 ? '1 note' : `${notes.length} notes`}
+          {data.total === 1 ? '1 note' : `${data.total} notes`}
         </p>
       )}
     </>

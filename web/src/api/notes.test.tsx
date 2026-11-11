@@ -1,14 +1,64 @@
 import { act, renderHook, screen, waitFor } from '@testing-library/react'
-import { delay, http } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
-import { apiError, apiUrl, db } from '../test/handlers'
+import { apiError, apiUrl, db, pageParams } from '../test/handlers'
 import { createTestQueryClient, createWrapper } from '../test/render'
 import { server } from '../test/server'
 import { ApiError } from './client'
-import { noteKeys, normalizeSearch, useCreateNote, useDeleteNote, useNote, useNotesSearch } from './notes'
+import {
+  flattenPages,
+  nextOffset,
+  noteKeys,
+  normalizeSearch,
+  PAGE_SIZE,
+  useCreateNote,
+  useDeleteNote,
+  useNote,
+  useNotesSearch,
+  type NotesList,
+  type NotesPages,
+  type NotesQuery,
+} from './notes'
 import type { Note } from './types'
 
-const ids = (notes: Note[] | undefined): string[] | undefined => notes?.map((n) => n.id)
+const ids = (list: NotesList | undefined): string[] | undefined => list?.notes.map((n) => n.id)
+
+const note = (id: string): Note => ({ id, title: id, body: '', tags: [], createdAt: '2026-11-01T09:00:00Z' })
+
+/** Cached pages, as useInfiniteQuery stores them. */
+const pages = (...list: { ids: string[]; total: number }[]): NotesPages => ({
+  pages: list.map((p) => ({ notes: p.ids.map(note), total: p.total })),
+  pageParams: list.map((_, i) => i * PAGE_SIZE),
+})
+
+/**
+ * Loads every page of a list, as the note list does while you scroll.
+ *
+ * Checks use the result fetchNextPage returns: TanStack Query only re-renders
+ * a hook for result fields that were read before they changed, so
+ * `result.current` can lag behind in a test that reads a field for the first
+ * time afterwards.
+ */
+async function loadAllPages(list: () => NotesQuery): Promise<void> {
+  await waitFor(() => expect(list().isSuccess).toBe(true))
+  let hasNextPage = list().hasNextPage
+  while (hasNextPage) {
+    hasNextPage = (await act(() => list().fetchNextPage())).hasNextPage
+  }
+}
+
+/** Records the offset and limit of every GET /notes, then lets the default handler answer. */
+function recordListRequests(): { offset: number; limit: number }[] {
+  const requests: { offset: number; limit: number }[] = []
+  server.use(
+    http.get(apiUrl('/notes'), ({ request }) => {
+      const { offset, limit } = pageParams(request)
+      requests.push({ offset, limit })
+      return undefined
+    }),
+  )
+  return requests
+}
 
 describe('normalizeSearch', () => {
   it('trims, collapses whitespace and lowercases', () => {
@@ -16,11 +66,65 @@ describe('normalizeSearch', () => {
   })
 })
 
+describe('nextOffset', () => {
+  it.each([
+    ['the next offset while notes remain', { notes: [note('a'), note('b')], total: 5 }, 0, 2],
+    ['the offset after a short page', { notes: [note('c')], total: 5 }, 2, 3],
+    ['nothing once the total is reached', { notes: [note('e')], total: 5 }, 4, undefined],
+    ['nothing after an empty page, even if total says more', { notes: [], total: 5 }, 4, undefined],
+  ])('gives %s', (_case, page, offset, want) => {
+    expect(nextOffset(page, offset)).toBe(want)
+  })
+})
+
+describe('flattenPages', () => {
+  it('joins the pages in order, with the total from the first page', () => {
+    expect(flattenPages(pages({ ids: ['a', 'b'], total: 3 }, { ids: ['c'], total: 3 }))).toEqual({
+      notes: [note('a'), note('b'), note('c')],
+      total: 3,
+    })
+  })
+
+  it('keeps a note that appears on two pages once, where it first appears', () => {
+    // A note created between page loads shifted "b" onto the second page too.
+    const list = flattenPages(pages({ ids: ['a', 'b'], total: 4 }, { ids: ['b', 'c'], total: 5 }))
+
+    expect(ids(list)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('hides notes being deleted and lowers the total for each', () => {
+    const list = flattenPages(pages({ ids: ['a', 'b'], total: 3 }, { ids: ['c'], total: 3 }), new Set(['b', 'zz']))
+
+    expect(ids(list)).toEqual(['a', 'c'])
+    // "zz" isn't loaded, so it doesn't count.
+    expect(list.total).toBe(2)
+  })
+})
+
 describe('useNotesSearch', () => {
-  it('returns every note, newest first, for an empty search', async () => {
+  it('loads the first page of 2, newest first, with the total', async () => {
+    const requests = recordListRequests()
     const { result } = renderHook(() => useNotesSearch(''), { wrapper: createWrapper() })
 
-    await waitFor(() => expect(ids(result.current.data)).toEqual(['n1', 'n2', 'n3']))
+    await waitFor(() => expect(ids(result.current.data)).toEqual(['n1', 'n2']))
+    expect(result.current.data?.total).toBe(3)
+    expect(result.current.hasNextPage).toBe(true)
+    expect(requests).toEqual([{ offset: 0, limit: PAGE_SIZE }])
+  })
+
+  it('loads the next page from the next offset, then has no more', async () => {
+    const requests = recordListRequests()
+    const { result } = renderHook(() => useNotesSearch(''), { wrapper: createWrapper() })
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true))
+
+    const after = await act(() => result.current.fetchNextPage())
+
+    expect(ids(after.data)).toEqual(['n1', 'n2', 'n3'])
+    expect(after.hasNextPage).toBe(false)
+    expect(requests).toEqual([
+      { offset: 0, limit: PAGE_SIZE },
+      { offset: 2, limit: PAGE_SIZE },
+    ])
   })
 
   it.each([
@@ -32,6 +136,7 @@ describe('useNotesSearch', () => {
     const { result } = renderHook(() => useNotesSearch(search), { wrapper: createWrapper() })
 
     await waitFor(() => expect(ids(result.current.data)).toEqual(want))
+    expect(result.current.hasNextPage).toBe(false)
   })
 
   it('keeps the previous results on screen while a new search loads', async () => {
@@ -39,23 +144,40 @@ describe('useNotesSearch', () => {
       wrapper: createWrapper(),
       initialProps: { search: '' },
     })
-    await waitFor(() => expect(ids(result.current.data)).toEqual(['n1', 'n2', 'n3']))
+    await waitFor(() => expect(ids(result.current.data)).toEqual(['n1', 'n2']))
 
     server.use(
       http.get(apiUrl('/notes'), async ({ request }) => {
         await delay(50)
-        const search = new URL(request.url).searchParams.get('search') ?? ''
-        return Response.json({ notes: db.search(search) })
+        const { search, offset, limit } = pageParams(request)
+        return HttpResponse.json(db.page(search, offset, limit))
       }),
     )
     rerender({ search: 'retro' })
 
     // Old results stay while the new search is in flight.
-    expect(ids(result.current.data)).toEqual(['n1', 'n2', 'n3'])
+    expect(ids(result.current.data)).toEqual(['n1', 'n2'])
     expect(result.current.isPlaceholderData).toBe(true)
 
     await waitFor(() => expect(result.current.isPlaceholderData).toBe(false))
     expect(ids(result.current.data)).toEqual(['n3'])
+  })
+
+  it('shows a note once when a new note shifts it onto the next page, and a refetch lines the pages up again', async () => {
+    const { result } = renderHook(() => useNotesSearch(''), { wrapper: createWrapper() })
+    await waitFor(() => expect(ids(result.current.data)).toEqual(['n1', 'n2']))
+
+    // An agent adds a newer note, so n2 moves from offset 1 to offset 2.
+    db.insert({ ...note('n0'), title: 'From an agent', createdAt: '2026-11-04T09:00:00Z' })
+    const shifted = await act(() => result.current.fetchNextPage())
+
+    // The second page (offset 2) is [n2, n3]; n2 is already shown, so it's kept once.
+    expect(ids(shifted.data)).toEqual(['n1', 'n2', 'n3'])
+
+    const refetched = await act(() => result.current.refetch())
+
+    expect(ids(refetched.data)).toEqual(['n0', 'n1', 'n2', 'n3'])
+    expect(refetched.data?.total).toBe(4)
   })
 
   it('turns an API error into a typed ApiError', async () => {
@@ -67,6 +189,18 @@ describe('useNotesSearch', () => {
     expect(result.current.error).toBeInstanceOf(ApiError)
     expect(result.current.error).toMatchObject({ status: 500, code: 'internal' })
   })
+
+  it('reports a failed next page, keeping the loaded notes', async () => {
+    const { result } = renderHook(() => useNotesSearch(''), { wrapper: createWrapper() })
+    await waitFor(() => expect(result.current.hasNextPage).toBe(true))
+    server.use(http.get(apiUrl('/notes'), () => apiError(500, 'internal', 'Something went wrong. Please try again.')))
+
+    const after = await act(() => result.current.fetchNextPage())
+
+    expect(after.isFetchNextPageError).toBe(true)
+    expect(after.error?.code).toBe('internal')
+    expect(ids(after.data)).toEqual(['n1', 'n2'])
+  })
 })
 
 describe('useNote', () => {
@@ -74,6 +208,23 @@ describe('useNote', () => {
     const { result } = renderHook(() => useNote('n2'), { wrapper: createWrapper() })
 
     await waitFor(() => expect(result.current.data?.title).toBe('API conventions'))
+  })
+
+  it('shows the copy from any loaded page of a list while the note loads', async () => {
+    const client = createTestQueryClient()
+    const list = renderHook(() => useNotesSearch(''), { wrapper: createWrapper(client) })
+    await loadAllPages(() => list.result.current)
+    server.use(
+      http.get(apiUrl('/notes/:id'), async () => {
+        await delay('infinite')
+      }),
+    )
+
+    const { result } = renderHook(() => useNote('n3'), { wrapper: createWrapper(client) })
+
+    // n3 is on the second page.
+    expect(result.current.data?.title).toBe('Retro notes')
+    expect(result.current.isPlaceholderData).toBe(true)
   })
 
   it('reports a missing note as not_found', async () => {
@@ -94,11 +245,13 @@ describe('useCreateNote', () => {
     const { result } = renderHook(() => ({ list: useNotesSearch(''), create: useCreateNote() }), {
       wrapper: createWrapper(),
     })
-    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    await loadAllPages(() => result.current.list)
 
     act(() => result.current.create.mutate({ title: 'New idea', tags: ['ideas'] }))
 
+    // The refetch reloads both loaded pages, now starting with the new note.
     await waitFor(() => expect(ids(result.current.list.data)).toEqual(['new-1', 'n1', 'n2', 'n3']))
+    expect(result.current.list.data?.total).toBe(4)
     expect(screen.getByRole('status')).toHaveTextContent('Note created')
   })
 
@@ -117,18 +270,41 @@ describe('useCreateNote', () => {
 })
 
 describe('useDeleteNote', () => {
-  it('removes the note at once and shows a success toast', async () => {
+  it('removes the note at once, lowers the total and shows a success toast', async () => {
     const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
       wrapper: createWrapper(),
     })
-    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    await loadAllPages(() => result.current.list)
 
     act(() => result.current.remove.mutate('n2'))
 
     await waitFor(() => expect(ids(result.current.list.data)).toEqual(['n1', 'n3']))
     await waitFor(() => expect(result.current.remove.isSuccess).toBe(true))
+    expect(result.current.list.data?.total).toBe(2)
     expect(screen.getByRole('status')).toHaveTextContent('Note deleted')
     expect(db.ids()).toEqual(['n1', 'n3'])
+  })
+
+  it('removes the note from its page in every cached list', async () => {
+    const client = createTestQueryClient()
+    const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
+      wrapper: createWrapper(client),
+    })
+    await loadAllPages(() => result.current.list)
+    // Keep the cache as the delete left it: no refetch afterwards.
+    server.use(
+      http.get(apiUrl('/notes'), async () => {
+        await delay('infinite')
+      }),
+    )
+
+    act(() => result.current.remove.mutate('n3'))
+    // The mutation itself stays pending: it waits for the (held) refetch.
+    expect(await screen.findByRole('status')).toHaveTextContent('Note deleted')
+
+    const cached = client.getQueryData<NotesPages>(noteKeys.list(''))
+    expect(cached?.pages.map((page) => page.notes.map((n) => n.id))).toEqual([['n1', 'n2'], []])
+    expect(cached?.pages.map((page) => page.total)).toEqual([2, 2])
   })
 
   it('removes the note optimistically, then rolls back and shows an error when the delete fails', async () => {
@@ -147,7 +323,7 @@ describe('useDeleteNote', () => {
     const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
       wrapper: createWrapper(),
     })
-    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    await loadAllPages(() => result.current.list)
 
     act(() => result.current.remove.mutate('n2'))
 
@@ -168,7 +344,7 @@ describe('useDeleteNote', () => {
     const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
       wrapper: createWrapper(),
     })
-    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    await loadAllPages(() => result.current.list)
 
     act(() => result.current.remove.mutate('n2'))
 
@@ -183,14 +359,15 @@ describe('useDeleteNote', () => {
     const { result } = renderHook(() => ({ list: useNotesSearch(''), remove: useDeleteNote() }), {
       wrapper: createWrapper(client),
     })
-    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    await loadAllPages(() => result.current.list)
     act(() => result.current.remove.mutate('n2'))
     await waitFor(() => expect(ids(result.current.list.data)).toEqual(['n1', 'n3']))
 
     // A refetch (like the 15 s interval or window focus) still gets n2 from the server.
     await act(() => result.current.list.refetch())
     await waitFor(() => expect(result.current.list.isFetching).toBe(false))
-    expect(ids(client.getQueryData<Note[]>(noteKeys.list('')))).toContain('n2')
+    const cachedIds = client.getQueryData<NotesPages>(noteKeys.list(''))?.pages.flatMap((p) => p.notes.map((n) => n.id))
+    expect(cachedIds).toContain('n2')
     expect(ids(result.current.list.data)).toEqual(['n1', 'n3'])
 
     release()
@@ -209,7 +386,7 @@ describe('useDeleteNote', () => {
       },
       { wrapper: createWrapper() },
     )
-    await waitFor(() => expect(result.current.list.data).toHaveLength(3))
+    await loadAllPages(() => result.current.list)
 
     act(() => result.current.first.mutate('n1'))
     act(() => result.current.second.mutate('n2'))

@@ -39,11 +39,11 @@ export function App() {
   })
 
   const findNote = (id: string): Note | undefined =>
-    notesQuery.data?.find((n) => n.id === id) ?? queryClient.getQueryData<Note>(noteKeys.detail(id))
+    notesQuery.data?.notes.find((n) => n.id === id) ?? queryClient.getQueryData<Note>(noteKeys.detail(id))
 
-  /** The note to select after `id` is deleted: the next one in the list, else the previous one. */
+  /** The note to select after `id` is deleted: the next loaded one in the list, else the previous one. */
   const neighbourOf = (id: string): string | null => {
-    const notes = notesQuery.data ?? []
+    const notes = notesQuery.data?.notes ?? []
     const i = notes.findIndex((n) => n.id === id)
     if (i === -1) return null
     return notes[i + 1]?.id ?? notes[i - 1]?.id ?? null
@@ -179,17 +179,16 @@ export function App() {
           aria-label="Note list"
           className={`min-h-0 w-full flex-col border-border bg-surface md:flex md:border-r ${noteId ? 'hidden' : 'flex'}`}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <NoteList
-              query={notesQuery}
-              search={activeSearch}
-              selectedId={noteId}
-              onSelect={openNote}
-              onDelete={setConfirmingDelete}
-              onClearSearch={() => setSearch('')}
-              onCreateNote={() => setCreating(true)}
-            />
-          </div>
+          {/* NoteList owns the scroll area: the virtual list measures it. */}
+          <NoteList
+            query={notesQuery}
+            search={activeSearch}
+            selectedId={noteId}
+            onSelect={openNote}
+            onDelete={setConfirmingDelete}
+            onClearSearch={() => setSearch('')}
+            onCreateNote={() => setCreating(true)}
+          />
           <ShortcutsHint />
         </section>
 

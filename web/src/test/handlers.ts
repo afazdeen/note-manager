@@ -1,6 +1,9 @@
 import { http, HttpResponse } from 'msw'
-import type { CreateNoteInput, Note, ServerErrorCode } from '../api/types'
+import type { CreateNoteInput, Note, NotesPage, ServerErrorCode } from '../api/types'
 import { env } from '../config/env'
+
+/** The API's default page size (DefaultPageSize in the Go service). */
+const API_DEFAULT_LIMIT = 2
 
 /** Builds a full API URL for MSW handlers, e.g. apiUrl('/notes'). */
 export const apiUrl = (path: string): string => `${env.apiBaseUrl}${path}`
@@ -40,15 +43,37 @@ export const db = {
       )
       .toSorted((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id))
   },
+  /** One page of search results, like GET /api/notes: skip `offset` matches, return at most `limit`. */
+  page(search: string, offset: number, limit: number): NotesPage {
+    const matches = db.search(search)
+    return { notes: matches.slice(offset, offset + limit), total: matches.length }
+  },
+  /** Adds a note straight to the "server", as an agent would over MCP. */
+  insert(note: Note): void {
+    notes.push({ ...note, tags: [...note.tags] })
+  },
 }
 db.reset()
+
+/** A list response holding every note in one page, for handlers that override GET /notes. */
+export const singlePage = (list: readonly Note[]) => HttpResponse.json({ notes: list, total: list.length })
+
+/** Reads offset, limit and search from a GET /notes request, with the API's defaults. */
+export function pageParams(request: Request): { search: string; offset: number; limit: number } {
+  const params = new URL(request.url).searchParams
+  return {
+    search: params.get('search') ?? '',
+    offset: Number(params.get('offset') ?? 0),
+    limit: Number(params.get('limit') ?? API_DEFAULT_LIMIT),
+  }
+}
 
 export const handlers = [
   http.get(apiUrl('/health'), () => HttpResponse.json({ status: 'ok' })),
 
   http.get(apiUrl('/notes'), ({ request }) => {
-    const search = new URL(request.url).searchParams.get('search') ?? ''
-    return HttpResponse.json({ notes: db.search(search) })
+    const { search, offset, limit } = pageParams(request)
+    return HttpResponse.json(db.page(search, offset, limit))
   }),
 
   http.get(apiUrl('/notes/:id'), ({ params }) => {

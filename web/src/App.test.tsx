@@ -1,9 +1,9 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http } from 'msw'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { App } from './App'
-import { apiError, apiUrl } from './test/handlers'
+import { apiError, apiUrl, singlePage } from './test/handlers'
 import { renderWithClient } from './test/render'
 import { server } from './test/server'
 import { setViewportWidth } from './test/viewport'
@@ -50,7 +50,7 @@ describe('note list', () => {
   })
 
   it('shows "No notes yet" when there are none', async () => {
-    server.use(http.get(apiUrl('/notes'), () => HttpResponse.json({ notes: [] })))
+    server.use(http.get(apiUrl('/notes'), () => singlePage([])))
     renderApp()
 
     expect(await screen.findByRole('heading', { name: 'No notes yet' })).toBeInTheDocument()
@@ -184,7 +184,7 @@ describe('selecting a note', () => {
 
   it('shows an error with Retry when the note fails to load', async () => {
     server.use(
-      http.get(apiUrl('/notes'), () => HttpResponse.json({ notes: [] })),
+      http.get(apiUrl('/notes'), () => singlePage([])),
       http.get(apiUrl('/notes/:id'), () => apiError(500, 'internal', 'Something went wrong. Please try again.'), {
         once: true,
       }),

@@ -16,18 +16,47 @@ async function rejection(promise: Promise<unknown>): Promise<ApiError> {
 }
 
 describe('notesApi', () => {
-  it('sends the search text as the search query parameter', async () => {
+  it('sends the search text, offset and limit as query parameters, and returns the page', async () => {
     let requested = ''
     server.use(
       http.get(apiUrl('/notes'), ({ request }) => {
         requested = request.url
-        return HttpResponse.json({ notes: [] })
+        return HttpResponse.json({ notes: [], total: 7 })
       }),
     )
 
-    await notesApi.search('go api')
+    const page = await notesApi.search('go api', 4, 2)
 
-    expect(new URL(requested).searchParams.get('search')).toBe('go api')
+    const params = new URL(requested).searchParams
+    expect(Object.fromEntries(params)).toEqual({ search: 'go api', offset: '4', limit: '2' })
+    expect(page).toEqual({ notes: [], total: 7 })
+  })
+
+  it('leaves out an empty search', async () => {
+    let requested = ''
+    server.use(
+      http.get(apiUrl('/notes'), ({ request }) => {
+        requested = request.url
+        return HttpResponse.json({ notes: [], total: 0 })
+      }),
+    )
+
+    await notesApi.search('', 0, 2)
+
+    expect(new URL(requested).searchParams.has('search')).toBe(false)
+  })
+
+  it.each([
+    ['missing', { notes: [] }],
+    ['not a number', { notes: [], total: '3' }],
+    ['negative', { notes: [], total: -1 }],
+    ['not a whole number', { notes: [], total: 1.5 }],
+  ])('rejects a list whose total is %s', async (_case, body) => {
+    server.use(http.get(apiUrl('/notes'), () => HttpResponse.json(body)))
+
+    const error = await rejection(notesApi.search('', 0, 2))
+
+    expect(error).toMatchObject({ status: 200, code: 'invalid_response' })
   })
 
   it('resolves a 204 delete with no value', async () => {
@@ -52,7 +81,7 @@ describe('notesApi', () => {
   it('maps a network failure to network_error with status 0', async () => {
     server.use(http.get(apiUrl('/notes'), () => HttpResponse.error()))
 
-    const error = await rejection(notesApi.search(''))
+    const error = await rejection(notesApi.search('', 0, 2))
 
     expect(error).toMatchObject({ status: 0, code: 'network_error' })
     expect(error.message).toMatch(/can't reach the server/i)
@@ -67,9 +96,9 @@ describe('notesApi', () => {
   })
 
   it('rejects a list whose notes are not in the API shape', async () => {
-    server.use(http.get(apiUrl('/notes'), () => HttpResponse.json({ notes: [{ id: 'n1' }] })))
+    server.use(http.get(apiUrl('/notes'), () => HttpResponse.json({ notes: [{ id: 'n1' }], total: 1 })))
 
-    const error = await rejection(notesApi.search(''))
+    const error = await rejection(notesApi.search('', 0, 2))
 
     expect(error).toMatchObject({ status: 200, code: 'invalid_response' })
   })
