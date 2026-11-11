@@ -2,8 +2,12 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
 import { afterAll, afterEach, beforeAll } from 'vitest'
 import { db } from './handlers'
+import { installLayoutStubs, resetLayout } from './layout'
 import { server } from './server'
 import { resetViewport } from './viewport'
+
+// Sizes and scrolling for the virtual note list (see layout.ts).
+installLayoutStubs()
 
 // jsdom has <dialog> but not showModal()/close(). These stand-ins only toggle
 // `open`; real browsers also make the page inert and trap focus.
@@ -24,5 +28,6 @@ afterEach(() => {
   db.reset()
   cleanup()
   resetViewport()
+  resetLayout()
 })
 afterAll(() => server.close())

@@ -94,11 +94,12 @@ The new note appears in the web app within 15 seconds. To look at the tools dire
 
 ## Key decisions and trade-offs
 
-- **Service/repository split.** `note.Service` owns the rules: validation, ids, timestamps and parsing the search text. `note.Repository` only stores, matches and orders notes, the way SQL would. **Moving to SQLite means writing one new repository**; the service, REST, MCP and their tests stay the same. *Trade-off:* the in-memory version loses data on restart.
+- **Service/repository split.** `note.Service` owns the rules: validation, ids, timestamps and parsing the search text. `note.Repository` only stores, matches, orders and pages notes, the way SQL would. **Moving to SQLite means writing one new repository**; the service, REST, MCP and their tests stay the same. *Trade-off:* the in-memory version loses data on restart.
 - **One server for REST and MCP.** People and agents can't drift apart: same notes, same validation, same errors. *Trade-off:* they scale together. That's fine at this size, and they could be split later because both only depend on the service.
 - **Standard library first (Go).** `net/http` routing, `slog` and Go's cross-origin protection, plus the official MCP SDK. There's less to learn and maintain, at the cost of writing a little middleware by hand.
 - **Stateless MCP with JSON responses.** It's simple, easy to test with curl and easy to scale. Since the 2026-07-28 MCP spec, the server can still ask the user mid-call (elicitation) without a session. *Trade-off:* only clients that support that spec can be asked this way; older ones would fall back to a confirmation the agent passes.
 - **Optimistic UI.** Deletes show at once and roll back with an error toast if the server fails. Searches keep the previous results on screen while loading. Lists refetch every 15 s so agents' changes appear. *Trade-off:* this polls instead of pushing live updates.
+- **Offset pagination and a virtual list.** The API returns pages (`offset`, `limit`, `total`) to REST and MCP alike. The web app loads 2 notes at a time as you scroll and only renders the rows near the view (TanStack Virtual), while keyboard navigation still covers the whole list. *Trade-off:* offsets shift when notes are added or deleted between page loads, so the app removes duplicates and its refetch re-aligns the pages; cursor pagination would avoid that. Each refetch also reloads every loaded page.
 - **Native `<dialog>` and a framework-free Web Component.** The browser handles the modal focus trap. `<tag-input>` works in any framework and picks up the app's colour tokens through CSS variables. *Trade-off:* shadow DOM needed some extra care in tests.
 - **Accessibility as a requirement, not polish.** Every action works from the keyboard and every control has a visible focus ring. Tap targets are at least 24px, and there's no sideways scrolling at 375px. The palette is locked to the design tokens.
 
@@ -109,7 +110,7 @@ The new note appears in the web app within 15 seconds. To look at the tools dire
 3. Editing notes, with an `updatedAt` and a way to handle two people editing at once.
 4. Live updates with server-sent events instead of polling.
 5. Playwright end-to-end tests in CI. I checked keyboard-only use and 375px in a real browser with one-off scripts.
-6. Pagination, Markdown in note bodies, dark mode, and testing with a real screen reader.
+6. Cursor (keyset) pagination instead of offsets, Markdown in note bodies, dark mode, and testing with a real screen reader.
 
 ## How I used AI tools
 
